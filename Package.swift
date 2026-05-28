@@ -12,6 +12,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.0.0"),
+        .package(url: "https://github.com/jpsim/Yams", "5.4.0"..<"7.0.0"),
         .package(path: "../PositronicKit"),
     ],
     targets: [
@@ -21,6 +22,7 @@ let package = Package(
                 .product(name: "Hummingbird", package: "hummingbird"),
                 .product(name: "PositronicKit", package: "PositronicKit"),
                 .product(name: "PKShared", package: "PositronicKit"),
+                .product(name: "Yams", package: "Yams"),
             ],
             path: "Sources/ShuttleServer"
         ),

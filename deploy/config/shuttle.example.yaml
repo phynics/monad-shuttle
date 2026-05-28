@@ -6,6 +6,37 @@ repository:
 runtime:
   container_image: ghcr.io/example/shuttle-runner:latest
   container_workdir: /workspace
+  command_policy:
+    allow:
+      - swift
+      - git
+    deny:
+      - rm
+
+refresh:
+  schedule: "0 * * * *"
+
+retention:
+  worktree_days: 7
+  raw_logs_days: 14
+  raw_logs_max_bytes: 10485760
+
+limits:
+  max_running_shards: 4
+  max_integrating_shards: 1
+  max_queued_shards: 32
+  max_log_bytes_per_shard: 5242880
+
+push_targets:
+  - name: origin-main
+    remote: origin
+    branch: main
+
+auth:
+  mode: local_admin
+
+instructions:
+  file_path: /config/shuttle-instructions.md
 
 server:
   host: 0.0.0.0

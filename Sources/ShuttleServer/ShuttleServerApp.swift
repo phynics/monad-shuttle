@@ -4,10 +4,16 @@ import Hummingbird
 public enum ShuttleServerApp {
     public struct Environment: Sendable {
         public let configuration: ShuttleServerConfiguration
+        let loadedConfig: ShuttleConfig?
         public let statusStore: ShuttleServerStatusStore
 
-        public init(configuration: ShuttleServerConfiguration, statusStore: ShuttleServerStatusStore) {
+        init(
+            configuration: ShuttleServerConfiguration,
+            loadedConfig: ShuttleConfig?,
+            statusStore: ShuttleServerStatusStore
+        ) {
             self.configuration = configuration
+            self.loadedConfig = loadedConfig
             self.statusStore = statusStore
         }
     }
@@ -20,6 +26,8 @@ public enum ShuttleServerApp {
         configuration: ShuttleServerConfiguration,
         statusStore: ShuttleServerStatusStore = ShuttleServerStatusStore()
     ) async throws -> Environment {
+        var loadedConfig: ShuttleConfig?
+
         if let configPath = configuration.configPath,
            !FileManager.default.isReadableFile(atPath: configPath) {
             await statusStore.setServerState(.fatal)
@@ -30,7 +38,24 @@ public enum ShuttleServerApp {
             throw ShuttleStartupError.unreadableConfigPath(configPath)
         }
 
-        return Environment(configuration: configuration, statusStore: statusStore)
+        if let configPath = configuration.configPath {
+            do {
+                loadedConfig = try ShuttleConfigLoader.load(fromFilePath: configPath)
+            } catch {
+                await statusStore.setServerState(.fatal)
+                await statusStore.setSubsystem(
+                    "config",
+                    status: .init(status: .failed, detail: "Invalid config: \(error)")
+                )
+                throw error
+            }
+        }
+
+        return Environment(
+            configuration: configuration,
+            loadedConfig: loadedConfig,
+            statusStore: statusStore
+        )
     }
 
     public static func makeRouter(environment: Environment) -> Router<BasicRequestContext> {
