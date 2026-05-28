@@ -21,6 +21,33 @@ Shuttle v1 is a Swift package and Docker-deployable service using the same broad
 
 The first release manages exactly one configured git repository per Shuttle deployment. Multiple repositories are future work.
 
+## V1 Scope
+
+V1 should be deliberately small: safe shard execution, a visible queue, manual conflict resolution, and explicit operator push controls.
+
+V1 includes:
+
+- one configured repository per deployment
+- shard creation by REST/UI
+- PositronicKit agents running inside the Shuttle server process
+- per-shard worktree containers used only as scoped execution environments
+- REST-only API
+- operator UI for queue, shard detail, logs, finish/abandon/input, and push
+- manual conflict records and manual conflict resolution
+- manual push actions to configured targets
+
+V1 non-goals:
+
+- no auto-running conflict-resolution agent or auto-running system shard
+- no multi-repository deployment
+- no API streaming, SSE, or WebSocket
+- no fine-grained authorization scopes
+- no Shuttle-owned full CI/check-suite engine
+- no distributed workers or containers that run the agent loop
+- no PositronicKit-compatible management workspace tools
+- no follow-up shard proposal UX
+- no separate human login/session layer for the UI
+
 ## Product Boundary
 
 Shuttle is the coding environment. It:
@@ -34,7 +61,7 @@ Shuttle is the coding environment. It:
 - provides REST APIs and a built-in local/admin web UI
 - supports explicit manual push actions to configured remote targets
 
-Shuttle-managed refs are local by default. `shuttle-main`, normal shard branches, and system shard branches are not pushed automatically.
+Shuttle-managed refs are local by default. `shuttle-main`, normal shard branches, and manually created conflict-resolution shard branches are not pushed automatically.
 
 ## Core Concepts
 
@@ -50,30 +77,34 @@ The single configured git repository for the deployment. Configuration comes fro
 - command policy
 - upstream refresh schedule
 - retention window
+- raw log retention or max-size rotation policy
+- concurrency limits
 - allowed or default push targets
 - API authentication settings
 - Shuttle instruction file path
 
 On startup, Shuttle validates existing volumes, validates the SSH key path, verifies Docker access, fetches upstream, creates or validates the bare repo, and creates or validates `shuttle-main`.
 
-### Management Workspace
+### Management API
 
-The management workspace is a PositronicKit-compatible workspace representing repo-level orchestration. It exposes tools for:
+V1 exposes repository-level orchestration through plain REST endpoints rather than PositronicKit-compatible management workspace tools. The API supports:
 
 - listing shards
 - creating shards from specs
+- requesting a running shard to finish
 - inspecting repo, queue, integration, and log state
 - retrying safe failed setup or integration operations
 - refreshing upstream
 - pushing refs to configured targets
 - abandoning or archiving retained shards
 
-It does not expose raw bare-repo internals as the normal tool surface.
+PositronicKit-compatible management tooling is deferred until the core service is stable. V1 does not expose raw bare-repo internals as a normal operator or agent surface.
 
 ### Shard
 
 A shard is Shuttle's unit of work. A shard has:
 
+- one immutable internal ID
 - one spec or instruction payload
 - one human-readable local branch
 - one git worktree
@@ -81,9 +112,8 @@ A shard is Shuttle's unit of work. A shard has:
 - one PositronicKit agent lifecycle
 - one combined lifecycle status
 - one append-only event log
-- optional follow-up shard proposals
 
-Normal shards are created by UI/API requests. System shards are created automatically for upstream refresh conflicts or shard merge conflicts.
+Shards are created by UI/API requests. Conflict resolution work is represented by conflict records in v1; an operator may manually create a normal shard to resolve a conflict.
 
 ### Shard Workspace
 
@@ -103,23 +133,20 @@ The Shuttle server may perform privileged orchestration internally, such as crea
 
 ### Server State
 
-- `booting`: process is alive, config not yet validated
-- `initializing_repo`: config, volumes, SSH key, Docker, bare repo, upstream fetch, and `shuttle-main` are being validated or created
 - `ready`: API/UI available; shards can run; repo integration may still be blocked
-- `degraded`: API/UI available, but a subsystem is impaired; unsafe operations return explicit errors
 - `draining`: shutdown requested; no new shards start; active operations receive a graceful stop window
 - `fatal`: startup cannot continue because required config, storage, Docker, or git prerequisites are invalid
 
-`degraded` is a real server state and should also expose detailed subsystem health for Docker, git, database, repo refresh, agent runtime, and filesystem volumes.
+Startup initialization is a process phase rather than a durable exposed state in v1. The API exposes subsystem health details separately for Docker, git, database, repo refresh, agent runtime, and filesystem volumes. A subsystem can report unhealthy while the server remains `ready`; operations that depend on that subsystem return explicit errors.
 
 ### Repository Integration State
 
 - `open`: `shuttle-main` accepts shard integrations
 - `refreshing`: scheduled or manual upstream refresh is in progress
 - `integrating`: a finished shard is being squash-merged into `shuttle-main`
-- `blocked`: integration is closed because a system shard must resolve an upstream or shard merge conflict
+- `blocked`: integration is closed because an upstream or shard merge conflict record requires operator action
 
-Invariant: `blocked` points to exactly one active system shard. Running shards may continue, but no shard transitions into integration while the repository is `blocked`.
+Invariant: `blocked` points to at least one open conflict record. Running shards may continue, but no shard transitions into integration while the repository is `blocked`. At most one integration operation may run at a time.
 
 ### Shard State
 
@@ -149,45 +176,58 @@ Retention is metadata, not a shard status. A `done` shard has `retainedUntil`; a
 
 If the agent appears done but has not called `finish_shard`, Shuttle sends one system warning instructing it to run appropriate checks and either call `finish_shard` or explain the blocker. If it cannot finish and provides a blocker/question, the shard moves to `needs_input`.
 
+The UI/API request-finish action sends that same finish instruction to a running shard. It does not mark the shard complete and does not bypass `finish_shard` or the minimum integration gate.
+
 `finish_shard` requires a structured completion report:
 
 - summary
 - files changed
 - checks run by the agent
+- validation command statuses recorded by the agent
 - known risks
-- follow-up shard proposals
 
-V1 relies on the shard agent to run appropriate checks. Shuttle verifies git state and mergeability, but it does not own configured check suites yet.
+V1 relies on the shard agent to run appropriate checks. Shuttle does not own configured check suites yet.
+
+Minimum integration gate:
+
+- completion report is present and valid
+- validation command statuses are recorded in the completion report
+- worktree has no unstaged changes
+- worktree has no untracked files unless every untracked path is explicitly listed in the completion report
+- the shard branch is mergeable into `shuttle-main`
+- repository integration state is `open`
 
 ## Integration
 
 When a shard calls `finish_shard`, Shuttle moves it to `integrating`. If repository integration state is `blocked`, the shard waits. If integration is open, Shuttle verifies the shard worktree and attempts a squash merge into local `shuttle-main`.
 
-The squash commit message is generated from the structured completion report. The original shard branch and worktree remain available read-only for seven days after successful integration. Logs and metadata are retained indefinitely.
+The squash commit message is generated from the structured completion report. The original shard branch and worktree remain available read-only for seven days after successful integration. Metadata is retained indefinitely. Raw logs follow the configured retention or max-size rotation policy.
 
 If a normal shard merge conflicts, Shuttle:
 
-1. creates a visible system shard with generated conflict-resolution instructions
+1. creates a visible conflict record with the conflict context
 2. sets repository integration state to `blocked`
 3. allows active shard work to continue
-4. prevents further shard integration until the system shard completes
+4. prevents further shard integration until an operator resolves the conflict
 
-The system shard runs with an agent automatically. When it calls `finish_shard`, Shuttle integrates the conflict resolution into `shuttle-main` and unblocks the repository if successful.
+V1 does not auto-run a conflict-resolution agent. An operator may resolve the conflict manually, or may create a new shard with a conflict-resolution spec. The repository remains `blocked` until an operator marks the conflict resolved and Shuttle validates that `shuttle-main` is clean and mergeable again.
 
 ## Upstream Refresh
 
 Shuttle periodically fetches the configured upstream branch according to YAML config. It attempts to integrate upstream changes into local `shuttle-main`.
 
+Upstream refresh policy is merge-based in v1. Shuttle fetches the configured upstream branch and attempts a non-rebase merge into `shuttle-main`. It does not reset or rebase `shuttle-main`.
+
 If the refresh applies cleanly, `shuttle-main` advances and future shards start from the updated integration line.
 
-If the refresh conflicts, Shuttle creates a system shard with generated instructions describing:
+If the refresh conflicts, Shuttle creates a conflict record describing:
 
 - upstream source branch and commit
 - current `shuttle-main`
 - conflict context
 - desired resolution outcome
 
-Repository integration state becomes `blocked`. Existing running shards continue, but no shard can integrate until the system shard completes.
+Repository integration state becomes `blocked`. Existing running shards continue, but no shard can integrate until an operator resolves the conflict. V1 does not auto-create or auto-run a system shard for upstream refresh conflicts.
 
 ## Push Actions
 
@@ -200,6 +240,27 @@ Push targets are operator-defined in YAML config. Shuttle warns if the repositor
 
 Fine-grained authorization is future work. V1 treats authenticated API clients as operator-capable.
 
+Shard creation and push requests require idempotency keys. If a client retries the same request with the same key, Shuttle returns the original result instead of creating duplicate shards or duplicate push records.
+
+## Branch And Ref Naming
+
+Every shard is keyed internally by an immutable ID. Human-readable branch names are display and git ergonomics, not identity.
+
+Normal shard branches use a slug derived from the shard title or spec summary, with a short stable suffix derived from the internal shard ID. Conflict-resolution shards created manually by operators use the same contract. Branch names must be unique in the bare repo; collisions append or extend the ID suffix rather than changing the shard identity.
+
+Shuttle records the immutable shard ID, branch name, worktree path, and creation base commit in SQLite. APIs use the immutable ID.
+
+## Concurrency Limits
+
+V1 configuration defines operational limits:
+
+- maximum running shards
+- maximum queued shards
+- maximum retained worktrees
+- maximum raw log size per shard or raw log retention period
+
+Integration concurrency is fixed at one. Only one shard may be in `integrating`, and only one upstream refresh may mutate `shuttle-main`, at a time.
+
 ## API
 
 Shuttle v1 is REST-only. There is no SSE or WebSocket in v1. The UI polls REST endpoints for queue and log updates.
@@ -210,16 +271,19 @@ The API covers:
 - health details
 - effective read-only config with secrets redacted
 - shard creation
+- idempotent shard creation
 - shard listing and filtering
 - shard detail
+- requesting a running shard to finish
 - answering `needs_input`
 - abandoning shards
 - retrying safe failed setup/integration operations
 - paginated shard and repo event logs
-- management and shard workspace references/tool metadata in PositronicKit-compatible terms
+- shard workspace references/tool metadata in PositronicKit-compatible terms
 - manual upstream refresh
+- conflict record inspection and manual resolution
 - integration state inspection
-- push actions
+- idempotent push actions
 
 ## UI
 
@@ -229,7 +293,7 @@ The first screen is the Integration Queue. It shows:
 
 - server state
 - repository integration state
-- blocked reason and active system shard, if any
+- blocked reason and open conflict records, if any
 - running shards
 - shards needing input
 - shards integrating
@@ -245,10 +309,10 @@ Shard detail pages show:
 - git summary
 - completion report
 - retained worktree status
+- request-finish action for running shards
 - answer box when status is `needs_input`
-- follow-up shard proposals awaiting confirmation
 
-Follow-up shards proposed by agents are never created automatically. A human or API client must confirm them.
+Follow-up shard proposal UX is deferred. Agents may mention follow-up ideas in their completion reports, but v1 does not model them as actionable UI objects.
 
 ## Persistence
 
@@ -258,11 +322,11 @@ SQLite records:
 
 - server/repo state snapshots
 - shard records
-- system shard relationships
+- conflict records
 - branch/worktree/container metadata
 - completion reports
-- follow-up proposals
 - audit events
+- idempotency keys and request results
 - append-only lifecycle and log indexes
 
 The API treats lifecycle events and raw logs as append-only.
@@ -274,7 +338,7 @@ Shuttle uses separate mounted volumes:
 - database volume: SQLite and migrations
 - git volume: bare repo and local refs
 - worktree volume: active and retained shard worktrees
-- log volume: append-only shard and repo logs retained indefinitely
+- log volume: append-only shard and repo raw logs with configurable retention or max-size rotation
 - config volume: YAML config and Shuttle instruction file
 - secrets volume: SSH key material
 
@@ -293,7 +357,7 @@ Startup is idempotent:
 7. fetch upstream
 8. validate or create local `shuttle-main`
 9. reconcile database records with git/worktree/container reality
-10. enter `ready` or `degraded`
+10. enter `ready`
 
 If required prerequisites are invalid, Shuttle enters `fatal`.
 
@@ -305,8 +369,8 @@ Recovery rules:
 - Running shards found after restart become resumable `running` if their worktree exists.
 - Containers are recreated from config when needed.
 - Shards found in `integrating` are inspected and either completed, returned to `running`, moved to `needs_input`, or marked `failed` with an explanatory event.
-- Repository `blocked` state is reconstructed from the active system shard pointer and git merge state.
-- Cleanup periodically removes retained worktree files and local shard branches after seven days, preserving logs and metadata.
+- Repository `blocked` state is reconstructed from open conflict records and git merge state.
+- Cleanup periodically removes retained worktree files and local shard branches after seven days, preserves lifecycle events and metadata indefinitely, and rotates or removes raw logs according to config.
 
 ## Security And Safety Invariants
 
@@ -320,6 +384,8 @@ Recovery rules:
 - SSH key material is not stored in SQLite.
 - Pushes are manual, audited, and target only configured destinations.
 - Retained worktrees become read-only after merge.
+- Shard and push API actions use idempotency keys.
+- APIs identify shards by immutable internal IDs, not branch names.
 
 ## Testing Strategy
 
@@ -332,16 +398,22 @@ Core coverage:
 - server state transitions
 - repository integration state transitions
 - shard lifecycle state transitions and invalid transitions
-- invariant that `blocked` points to exactly one active system shard
+- invariant that `blocked` points to open conflict records
 - human-readable branch naming and collision handling
+- immutable shard IDs remain stable when branch names collide
 - worktree creation from `shuttle-main`
 - shard filesystem/git/command tools cannot escape the shard workdir/container
 - `finish_shard` report validation
+- minimum integration gate enforcement
 - squash merge commit message generation
-- merge conflict handling creates system shards and blocks integration
+- merge conflict handling creates conflict records and blocks integration
 - upstream refresh conflict handling
+- merge-based upstream refresh semantics
 - startup reconciliation for `running`, `integrating`, `done`, and retained shards
 - manual push audit logging and warning behavior
+- shard creation and push idempotency
+- concurrency limit enforcement
+- raw log retention or max-size rotation
 - REST contract tests for queue, shard detail, logs, answer/resume, and push actions
 
 ## Deferred Work
@@ -352,5 +424,8 @@ Core coverage:
 - configured check suites owned by Shuttle
 - SSE/WebSocket log streaming
 - independent worker containers that run agent loops
+- PositronicKit-compatible management workspace tools
+- auto-running conflict-resolution agents or system shards
+- actionable follow-up shard proposal UX
 - secret backend integrations beyond mounted SSH keys
 - richer Monad integration
