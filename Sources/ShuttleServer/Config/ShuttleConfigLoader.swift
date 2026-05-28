@@ -17,7 +17,7 @@ enum ShuttleConfigLoader {
         } catch let error as ShuttleConfigError {
             throw error
         } catch {
-            throw ShuttleConfigError.invalidYAML(String(describing: error))
+            throw ShuttleConfigError.invalidYAML("invalid YAML document")
         }
 
         let root = try YAMLMapping(

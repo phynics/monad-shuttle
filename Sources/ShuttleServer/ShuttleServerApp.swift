@@ -60,7 +60,11 @@ public enum ShuttleServerApp {
 
     public static func makeRouter(environment: Environment) -> Router<BasicRequestContext> {
         let router = Router(context: BasicRequestContext.self)
-        ShuttleServerRoutes.register(on: router, statusStore: environment.statusStore)
+        ShuttleServerRoutes.register(
+            on: router,
+            statusStore: environment.statusStore,
+            loadedConfig: environment.loadedConfig
+        )
         return router
     }
 
