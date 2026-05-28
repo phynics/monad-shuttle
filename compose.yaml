@@ -1,0 +1,24 @@
+services:
+  shuttle:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: shuttle:dev
+    ports:
+      - "8080:8080"
+    environment:
+      SHUTTLE_CONFIG_PATH: /config/shuttle.yaml
+    volumes:
+      - shuttle-db:/data/db
+      - shuttle-git:/data/git
+      - shuttle-worktrees:/data/worktrees
+      - shuttle-logs:/data/logs
+      - ./deploy/config:/config:ro
+      - ./deploy/secrets:/secrets:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  shuttle-db:
+  shuttle-git:
+  shuttle-worktrees:
+  shuttle-logs:

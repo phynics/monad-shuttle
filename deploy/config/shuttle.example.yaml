@@ -1,0 +1,12 @@
+repository:
+  url: git@github.com:example/example-repo.git
+  source_branch: main
+  ssh_key_path: /secrets/id_ed25519
+
+runtime:
+  container_image: ghcr.io/example/shuttle-runner:latest
+  container_workdir: /workspace
+
+server:
+  host: 0.0.0.0
+  port: 8080
