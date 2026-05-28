@@ -4,7 +4,7 @@
 
 **Goal:** Deliver Shuttle v1 as a safe, single-repository shard execution service with REST API, operator UI, scoped container execution, manual conflict handling, and explicit push controls.
 
-**Architecture:** Shuttle is a standalone Swift package. The server owns repository state, shard lifecycle, PositronicKit agent execution, per-shard worktree containers, REST API, and local/admin UI. Git, Docker, database, log, config, and secret concerns are isolated behind focused services.
+**Architecture:** Shuttle is a standalone Swift package. The server owns repository state, shard lifecycle, PositronicKit agent execution, per-shard worktree containers, and REST API. The local/admin UI lives in a separate `ShuttleWebUI` target and consumes the same REST surface. Git, Docker, database, log, config, and secret concerns are isolated behind focused services.
 
 **Tech Stack:** Swift 6, SwiftPM, Hummingbird, GRDB/SQLite, PositronicKit, Docker socket plus `docker exec`, mounted YAML config, mounted SSH key secrets.
 
@@ -35,7 +35,7 @@
 - `Sources/ShuttleServer/Docker/*.swift`: Docker socket checks, container lifecycle, `docker exec`.
 - `Sources/ShuttleServer/Tools/*.swift`: shard workspace tools and scoped tool adapters.
 - `Sources/ShuttleServer/Agents/*.swift`: PositronicKit agent runner and prompt/context assembly.
-- `Sources/ShuttleServer/UI/*.swift`: static UI assets or server-rendered UI shell.
+- `Sources/ShuttleWebUI/*.swift`: UI composition, assets, and REST-facing client layer for the operator surface.
 - `Tests/ShuttleServerTests/*`: unit and integration tests.
 - `docs/superpowers/specs/2026-05-28-shuttle-design.md`: source design spec.
 
@@ -51,6 +51,7 @@
 - `swift test` succeeds with at least one smoke test.
 - Package depends on `../PositronicKit` by path.
 - Package includes executable product `ShuttleServer`.
+- Package includes a separate `ShuttleWebUI` target for future UI work.
 - No Monad target is modified.
 
 **Dependencies:** none.

@@ -7,6 +7,7 @@ let package = Package(
         .macOS(.v15),
     ],
     products: [
+        .library(name: "ShuttleWebUI", targets: ["ShuttleWebUI"]),
         .executable(name: "ShuttleServer", targets: ["ShuttleServer"]),
     ],
     dependencies: [
@@ -21,10 +22,19 @@ let package = Package(
             ],
             path: "Sources/ShuttleServer"
         ),
+        .target(
+            name: "ShuttleWebUI",
+            path: "Sources/ShuttleWebUI"
+        ),
         .testTarget(
             name: "ShuttleServerTests",
             dependencies: ["ShuttleServer"],
             path: "Tests/ShuttleServerTests"
+        ),
+        .testTarget(
+            name: "ShuttleWebUITests",
+            dependencies: ["ShuttleWebUI"],
+            path: "Tests/ShuttleWebUITests"
         ),
     ]
 )

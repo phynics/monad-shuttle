@@ -58,7 +58,7 @@ Shuttle is the coding environment. It:
 - creates one git worktree per shard
 - runs PositronicKit shard agents inside the Shuttle server process
 - executes shard filesystem, git, and command tools only inside each shard's worktree/container boundary
-- provides REST APIs and a built-in local/admin web UI
+- provides REST APIs and a built-in local/admin web UI implemented in a separate `ShuttleWebUI` target
 - supports explicit manual push actions to configured remote targets
 
 Shuttle-managed refs are local by default. `shuttle-main`, normal shard branches, and manually created conflict-resolution shard branches are not pushed automatically.
@@ -288,6 +288,7 @@ The API covers:
 ## UI
 
 The built-in UI is a local/admin operator surface that consumes the same REST API. V1 does not include a separate human login/session layer.
+The UI should live in its own SwiftPM target rather than inside `ShuttleServer`, so server and UI dependencies can evolve independently.
 
 The first screen is the Integration Queue. It shows:
 
