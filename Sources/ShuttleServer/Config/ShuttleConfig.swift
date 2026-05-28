@@ -35,6 +35,13 @@ struct ShuttleConfig: Equatable, Sendable {
         let maxLogBytesPerShard: Int
     }
 
+    struct Paths: Equatable, Sendable {
+        let databasePath: String
+        let gitPath: String
+        let worktreesPath: String
+        let logsPath: String
+    }
+
     struct PushTarget: Equatable, Sendable {
         let name: String
         let remote: String
@@ -63,6 +70,7 @@ struct ShuttleConfig: Equatable, Sendable {
     let refresh: Refresh
     let retention: Retention
     let limits: Limits
+    let paths: Paths
     let pushTargets: [PushTarget]
     let auth: Auth
     let instructions: Instructions

@@ -69,6 +69,10 @@ final class ShuttleConfigLoaderTests: XCTestCase {
         XCTAssertEqual(config.limits.maxIntegratingShards, 1)
         XCTAssertEqual(config.limits.maxQueuedShards, 32)
         XCTAssertEqual(config.limits.maxLogBytesPerShard, 5_242_880)
+        XCTAssertEqual(config.paths.databasePath, "/data/db")
+        XCTAssertEqual(config.paths.gitPath, "/data/git")
+        XCTAssertEqual(config.paths.worktreesPath, "/data/worktrees")
+        XCTAssertEqual(config.paths.logsPath, "/data/logs")
         XCTAssertEqual(config.pushTargets, [
             ShuttleConfig.PushTarget(name: "origin-main", remote: "origin", branch: "main")
         ])

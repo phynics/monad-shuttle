@@ -25,6 +25,12 @@ final class ShuttleConfigRedactionTests: XCTestCase {
                 maxQueuedShards: 32,
                 maxLogBytesPerShard: 5_242_880
             ),
+            paths: .init(
+                databasePath: "/data/db",
+                gitPath: "/data/git",
+                worktreesPath: "/data/worktrees",
+                logsPath: "/data/logs"
+            ),
             pushTargets: [.init(name: "origin-main", remote: "origin", branch: "main")],
             auth: .init(mode: .localAdmin),
             instructions: .init(filePath: "/config/shuttle-instructions.md"),
@@ -77,6 +83,12 @@ final class ShuttleConfigRedactionTests: XCTestCase {
                     maxIntegratingShards: 1,
                     maxQueuedShards: 32,
                     maxLogBytesPerShard: 5_242_880
+                ),
+                paths: .init(
+                    databasePath: "/data/db",
+                    gitPath: "/data/git",
+                    worktreesPath: "/data/worktrees",
+                    logsPath: "/data/logs"
                 ),
                 pushTargets: [.init(name: "origin-main", remote: "origin", branch: "main")],
                 auth: .init(mode: .localAdmin),

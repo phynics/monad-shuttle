@@ -27,6 +27,7 @@ enum ShuttleConfigLoader {
                 "auth",
                 "instructions",
                 "limits",
+                "paths",
                 "push_targets",
                 "refresh",
                 "repository",
@@ -41,6 +42,7 @@ enum ShuttleConfigLoader {
         let refresh = try loadRefresh(from: root.requiredMapping("refresh"))
         let retention = try loadRetention(from: root.requiredMapping("retention"))
         let limits = try loadLimits(from: root.requiredMapping("limits"))
+        let paths = try loadPaths(from: root.optionalMapping("paths"))
         let pushTargets = try loadPushTargets(from: root)
         let auth = try loadAuth(from: root.requiredMapping("auth"))
         let instructions = try loadInstructions(from: root.requiredMapping("instructions"))
@@ -52,6 +54,7 @@ enum ShuttleConfigLoader {
             refresh: refresh,
             retention: retention,
             limits: limits,
+            paths: paths,
             pushTargets: pushTargets,
             auth: auth,
             instructions: instructions,
@@ -219,6 +222,38 @@ enum ShuttleConfigLoader {
         }
 
         return pushTargets
+    }
+
+    private static func loadPaths(from mapping: YAMLMapping?) throws -> ShuttleConfig.Paths {
+        guard let mapping else {
+            return .init(
+                databasePath: "/data/db",
+                gitPath: "/data/git",
+                worktreesPath: "/data/worktrees",
+                logsPath: "/data/logs"
+            )
+        }
+
+        try mapping.validateAllowedKeys(["database", "git", "logs", "worktrees"])
+
+        return .init(
+            databasePath: try requireAbsolutePath(
+                mapping.optionalString("database") ?? "/data/db",
+                field: "paths.database"
+            ),
+            gitPath: try requireAbsolutePath(
+                mapping.optionalString("git") ?? "/data/git",
+                field: "paths.git"
+            ),
+            worktreesPath: try requireAbsolutePath(
+                mapping.optionalString("worktrees") ?? "/data/worktrees",
+                field: "paths.worktrees"
+            ),
+            logsPath: try requireAbsolutePath(
+                mapping.optionalString("logs") ?? "/data/logs",
+                field: "paths.logs"
+            )
+        )
     }
 
     private static func loadAuth(from mapping: YAMLMapping) throws -> ShuttleConfig.Auth {

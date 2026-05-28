@@ -55,4 +55,6 @@ public enum ShuttleStartupError: Error, Equatable, Sendable {
     case invalidPort(String)
     case missingValue(String)
     case unreadableConfigPath(String)
+    case invalidVolumePath(subsystem: String, path: String)
+    case unreadableSSHKeyPath(String)
 }

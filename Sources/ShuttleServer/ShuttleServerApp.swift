@@ -41,6 +41,13 @@ public enum ShuttleServerApp {
         if let configPath = configuration.configPath {
             do {
                 loadedConfig = try ShuttleConfigLoader.load(fromFilePath: configPath)
+                try await validateStartupPaths(
+                    loadedConfig: loadedConfig,
+                    configPath: configPath,
+                    statusStore: statusStore
+                )
+            } catch let startupError as ShuttleStartupError {
+                throw startupError
             } catch {
                 await statusStore.setServerState(.fatal)
                 await statusStore.setSubsystem(
@@ -56,6 +63,51 @@ public enum ShuttleServerApp {
             loadedConfig: loadedConfig,
             statusStore: statusStore
         )
+    }
+
+    private static func validateStartupPaths(
+        loadedConfig: ShuttleConfig?,
+        configPath: String,
+        statusStore: ShuttleServerStatusStore
+    ) async throws {
+        guard let loadedConfig else {
+            return
+        }
+
+        func fail(subsystem: String, detail: String, error: ShuttleStartupError) async throws -> Never {
+            await statusStore.setServerState(.fatal)
+            await statusStore.setSubsystem(subsystem, status: .init(status: .failed, detail: detail))
+            throw error
+        }
+
+        let fileManager = FileManager.default
+        let volumeChecks: [(subsystem: String, path: String, label: String)] = [
+            ("database", loadedConfig.paths.databasePath, "database volume"),
+            ("git", loadedConfig.paths.gitPath, "git volume"),
+            ("volumes", loadedConfig.paths.worktreesPath, "worktree volume"),
+            ("volumes", loadedConfig.paths.logsPath, "log volume"),
+            ("config", (configPath as NSString).deletingLastPathComponent, "config volume"),
+            ("config", (loadedConfig.repository.sshKeyPath as NSString).deletingLastPathComponent, "secrets volume"),
+        ]
+
+        for check in volumeChecks {
+            var isDirectory: ObjCBool = false
+            if !fileManager.fileExists(atPath: check.path, isDirectory: &isDirectory) || !isDirectory.boolValue {
+                try await fail(
+                    subsystem: check.subsystem,
+                    detail: "Missing \(check.label) path: \(check.path)",
+                    error: .invalidVolumePath(subsystem: check.subsystem, path: check.path)
+                )
+            }
+        }
+
+        if !fileManager.isReadableFile(atPath: loadedConfig.repository.sshKeyPath) {
+            try await fail(
+                subsystem: "config",
+                detail: "Unreadable SSH key path: \(loadedConfig.repository.sshKeyPath)",
+                error: .unreadableSSHKeyPath(loadedConfig.repository.sshKeyPath)
+            )
+        }
     }
 
     public static func makeRouter(environment: Environment) -> Router<BasicRequestContext> {

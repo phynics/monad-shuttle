@@ -27,6 +27,12 @@ limits:
   max_queued_shards: 32
   max_log_bytes_per_shard: 5242880
 
+paths:
+  database: /data/db
+  git: /data/git
+  worktrees: /data/worktrees
+  logs: /data/logs
+
 push_targets:
   - name: origin-main
     remote: origin

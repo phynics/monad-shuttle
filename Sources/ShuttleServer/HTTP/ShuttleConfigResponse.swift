@@ -41,6 +41,13 @@ public struct ShuttleConfigResponse: ResponseCodable, Equatable, Sendable {
         public let branch: String
     }
 
+    public struct Paths: Codable, Equatable, Sendable {
+        public let database: String
+        public let git: String
+        public let worktrees: String
+        public let logs: String
+    }
+
     public struct Auth: Codable, Equatable, Sendable {
         public let mode: String
     }
@@ -59,6 +66,7 @@ public struct ShuttleConfigResponse: ResponseCodable, Equatable, Sendable {
     public let refresh: Refresh
     public let retention: Retention
     public let limits: Limits
+    public let paths: Paths
     public let pushTargets: [PushTarget]
     public let auth: Auth
     public let instructions: Instructions
@@ -89,6 +97,12 @@ public struct ShuttleConfigResponse: ResponseCodable, Equatable, Sendable {
             maxIntegratingShards: config.limits.maxIntegratingShards,
             maxQueuedShards: config.limits.maxQueuedShards,
             maxLogBytesPerShard: config.limits.maxLogBytesPerShard
+        )
+        self.paths = .init(
+            database: config.paths.databasePath,
+            git: config.paths.gitPath,
+            worktrees: config.paths.worktreesPath,
+            logs: config.paths.logsPath
         )
         self.pushTargets = config.pushTargets.map {
             .init(name: $0.name, remote: $0.remote, branch: $0.branch)
