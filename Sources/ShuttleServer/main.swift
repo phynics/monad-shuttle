@@ -1,1 +1,1 @@
-ShuttleServerApp.main()
+try await ShuttleServerApp.main()

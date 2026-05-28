@@ -11,12 +11,14 @@ let package = Package(
         .executable(name: "ShuttleServer", targets: ["ShuttleServer"]),
     ],
     dependencies: [
+        .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.0.0"),
         .package(path: "../PositronicKit"),
     ],
     targets: [
         .executableTarget(
             name: "ShuttleServer",
             dependencies: [
+                .product(name: "Hummingbird", package: "hummingbird"),
                 .product(name: "PositronicKit", package: "PositronicKit"),
                 .product(name: "PKShared", package: "PositronicKit"),
             ],
@@ -28,7 +30,11 @@ let package = Package(
         ),
         .testTarget(
             name: "ShuttleServerTests",
-            dependencies: ["ShuttleServer"],
+            dependencies: [
+                "ShuttleServer",
+                .product(name: "Hummingbird", package: "hummingbird"),
+                .product(name: "HummingbirdTesting", package: "hummingbird"),
+            ],
             path: "Tests/ShuttleServerTests"
         ),
         .testTarget(
