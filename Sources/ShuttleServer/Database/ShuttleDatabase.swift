@@ -77,6 +77,20 @@ enum ShuttleDatabase {
                 table.column("payload_json", .text).notNull()
             }
             try db.create(index: "idx_audit_events_entity", on: "audit_events", columns: ["entity_type", "entity_id"])
+            try db.execute(sql: """
+                CREATE TRIGGER audit_events_prevent_update
+                BEFORE UPDATE ON audit_events
+                BEGIN
+                    SELECT RAISE(ABORT, 'audit_events are append-only');
+                END;
+                """)
+            try db.execute(sql: """
+                CREATE TRIGGER audit_events_prevent_delete
+                BEFORE DELETE ON audit_events
+                BEGIN
+                    SELECT RAISE(ABORT, 'audit_events are append-only');
+                END;
+                """)
 
             try db.create(table: "idempotency_keys") { table in
                 table.column("idempotency_key", .text).primaryKey()
