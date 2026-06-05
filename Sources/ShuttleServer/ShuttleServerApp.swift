@@ -6,17 +6,21 @@ public enum ShuttleServerApp {
         public let configuration: ShuttleServerConfiguration
         let loadedConfig: ShuttleConfig?
         let managedRepository: ShuttleRepositoryBootstrapResult?
+        let dockerAccessController: ShuttleDockerAccessController
         public let statusStore: ShuttleServerStatusStore
 
         init(
             configuration: ShuttleServerConfiguration,
             loadedConfig: ShuttleConfig?,
             managedRepository: ShuttleRepositoryBootstrapResult?,
+            dockerAccessController: ShuttleDockerAccessController? = nil,
             statusStore: ShuttleServerStatusStore
         ) {
             self.configuration = configuration
             self.loadedConfig = loadedConfig
             self.managedRepository = managedRepository
+            self.dockerAccessController = dockerAccessController
+                ?? ShuttleDockerAccessController(client: .live(), statusStore: statusStore)
             self.statusStore = statusStore
         }
     }
@@ -27,10 +31,15 @@ public enum ShuttleServerApp {
 
     public static func makeEnvironment(
         configuration: ShuttleServerConfiguration,
-        statusStore: ShuttleServerStatusStore = ShuttleServerStatusStore()
+        statusStore: ShuttleServerStatusStore = ShuttleServerStatusStore(),
+        dockerClient: ShuttleDockerClient = .live()
     ) async throws -> Environment {
         var loadedConfig: ShuttleConfig?
         var managedRepository: ShuttleRepositoryBootstrapResult?
+        let dockerAccessController = ShuttleDockerAccessController(
+            client: dockerClient,
+            statusStore: statusStore
+        )
 
         if let configPath = configuration.configPath,
            !FileManager.default.isReadableFile(atPath: configPath) {
@@ -66,10 +75,13 @@ public enum ShuttleServerApp {
             }
         }
 
+        _ = await dockerAccessController.probeHealth()
+
         return Environment(
             configuration: configuration,
             loadedConfig: loadedConfig,
             managedRepository: managedRepository,
+            dockerAccessController: dockerAccessController,
             statusStore: statusStore
         )
     }
