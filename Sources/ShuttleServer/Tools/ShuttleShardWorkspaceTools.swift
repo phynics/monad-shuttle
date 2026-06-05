@@ -28,10 +28,18 @@ enum ShuttleShardWorkspaceToolFactory {
     static func makeAllTools(
         shardID: String,
         worktreePath: String,
-        commandService: ShuttleShardCommandExecutionService
+        commandService: ShuttleShardCommandExecutionService,
+        lifecycleService: ShuttleShardLifecycleService? = nil
     ) -> [AnyTool] {
-        makeFilesystemTools(worktreePath: worktreePath)
+        var tools = makeFilesystemTools(worktreePath: worktreePath)
             + makeGitTools(shardID: shardID, commandService: commandService)
+        if let lifecycleService {
+            tools += ShuttleShardLifecycleToolFactory.makeLifecycleTools(
+                shardID: shardID,
+                lifecycleService: lifecycleService
+            )
+        }
+        return tools
     }
 }
 

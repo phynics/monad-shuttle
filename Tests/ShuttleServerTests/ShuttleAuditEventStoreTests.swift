@@ -10,6 +10,12 @@ final class ShuttleAuditEventStoreTests: XCTestCase {
 
         try store.recordShardCreated(shardID: "shard-1", title: "Implement parser", actor: actor)
         try store.recordShardFinishRequested(shardID: "shard-1", actor: actor)
+        try store.recordShardInputRequested(
+            shardID: "shard-1",
+            question: "Need deployment target",
+            details: "Remote branch is ambiguous",
+            actor: actor
+        )
         try store.recordShardInputAnswered(
             shardID: "shard-1",
             answerSummary: "Provided missing env var details",
@@ -31,10 +37,11 @@ final class ShuttleAuditEventStoreTests: XCTestCase {
         )
 
         let events = try store.fetchAll()
-        XCTAssertEqual(events.count, 7)
+        XCTAssertEqual(events.count, 8)
         XCTAssertEqual(events.map(\.eventType), [
             "shard_created",
             "shard_finish_requested",
+            "shard_input_requested",
             "shard_input_answered",
             "shard_abandoned",
             "conflict_created",

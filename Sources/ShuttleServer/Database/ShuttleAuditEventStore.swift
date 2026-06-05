@@ -70,6 +70,25 @@ struct ShuttleAuditEventStore {
         )
     }
 
+    func recordShardInputRequested(
+        shardID: String,
+        question: String,
+        details: String?,
+        actor: ShuttleActorIdentity?
+    ) throws {
+        var payload = ["question": question]
+        if let details, !details.isEmpty {
+            payload["details"] = details
+        }
+        try append(
+            entityType: "shard",
+            entityID: shardID,
+            eventType: "shard_input_requested",
+            payload: payload,
+            actor: actor
+        )
+    }
+
     func recordShardAbandoned(
         shardID: String,
         reason: String,

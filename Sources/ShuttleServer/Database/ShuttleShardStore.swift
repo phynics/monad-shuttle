@@ -155,6 +155,39 @@ struct ShuttleShardStore {
         }
     }
 
+    func updateState(
+        shardID: String,
+        to nextState: ShuttleShardState,
+        updatedAt: Date = Date()
+    ) throws {
+        try dbQueue.write { db in
+            guard let existing = try fetchShard(id: shardID, db: db) else {
+                throw ShuttleShardStoreError.shardNotFound(shardID)
+            }
+
+            try db.execute(
+                sql: """
+                UPDATE shards
+                SET state = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                arguments: [
+                    nextState.rawValue,
+                    updatedAt,
+                    shardID,
+                ]
+            )
+
+            if db.changesCount == 0 {
+                throw ShuttleShardStoreError.shardNotFound(shardID)
+            }
+
+            if nextState == existing.state {
+                return
+            }
+        }
+    }
+
     func updateContainerMetadata(
         shardID: String,
         containerName: String,
