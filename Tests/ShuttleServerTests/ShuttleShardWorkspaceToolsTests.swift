@@ -68,6 +68,63 @@ final class ShuttleShardWorkspaceToolsTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.worktree.appendingPathComponent("Sources/New.swift").path))
     }
 
+    func testFilesystemToolsRejectGitMetadataInRealWorktree() async throws {
+        let fixture = try makeGitWorktreeFixture()
+        let tools = ShuttleShardWorkspaceToolFactory.makeFilesystemTools(worktreePath: fixture.worktree.path)
+        let toolByID = Dictionary(uniqueKeysWithValues: tools.map { ($0.id, $0) })
+
+        let readGitFile = try await XCTUnwrap(toolByID["cat"]).execute(parameters: ["path": ".git"])
+        XCTAssertFalse(readGitFile.success)
+
+        let grepGitFile = try await XCTUnwrap(toolByID["grep"]).execute(parameters: [
+            "path": ".",
+            "pattern": "gitdir:",
+            "recursive": true,
+        ])
+        XCTAssertFalse(grepGitFile.output.contains(".git:"))
+
+        let searchFiles = try await XCTUnwrap(toolByID["search_files"]).execute(parameters: [
+            "pattern": "gitdir:",
+        ])
+        XCTAssertFalse(searchFiles.output.contains(".git:"))
+
+        let writeGitFile = try await XCTUnwrap(toolByID["write_file"]).execute(parameters: [
+            "path": ".git",
+            "content": "broken\n",
+        ])
+        XCTAssertFalse(writeGitFile.success)
+
+        let deleteGitFile = try await XCTUnwrap(toolByID["delete_file"]).execute(parameters: ["path": ".git"])
+        XCTAssertFalse(deleteGitFile.success)
+
+        let gitFileContents = try String(
+            contentsOf: fixture.worktree.appendingPathComponent(".git"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(gitFileContents.contains("gitdir: "))
+    }
+
+    func testWriteAndDeleteRejectHardLinkedFiles() async throws {
+        let root = try makeWorktreeFixture()
+        let writeTool = ShuttleWriteFileTool(worktreePath: root.worktree.path)
+        let deleteTool = ShuttleDeleteFileTool(worktreePath: root.worktree.path)
+        let hardLinkedPath = root.worktree.appendingPathComponent("hard-linked.txt")
+
+        try FileManager.default.linkItem(at: root.outsideFile, to: hardLinkedPath)
+
+        let writeLinkedFile = try await writeTool.execute(parameters: [
+            "path": "hard-linked.txt",
+            "content": "mutated\n",
+        ])
+        XCTAssertFalse(writeLinkedFile.success)
+        XCTAssertEqual(try String(contentsOf: root.outsideFile, encoding: .utf8), "secret")
+
+        let deleteLinkedFile = try await deleteTool.execute(parameters: ["path": "hard-linked.txt"])
+        XCTAssertFalse(deleteLinkedFile.success)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: hardLinkedPath.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.outsideFile.path))
+    }
+
     func testGitToolsExecuteInsideShardContainerWorkdir() async throws {
         let fixture = try ShuttleGitTestFixture.create()
         let environment = try makeEnvironment(originURL: fixture.originBareRepository)
@@ -117,7 +174,7 @@ final class ShuttleShardWorkspaceToolsTests: XCTestCase {
 
     private func makeWorktreeFixture() throws -> (root: URL, worktree: URL, outsideFile: URL) {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        let worktree = root.appendingPathComponent("worktree", isDirectory: true)
+        let worktree = root.appendingPathComponent("wt", isDirectory: true)
         let sources = worktree.appendingPathComponent("Sources", isDirectory: true)
         try FileManager.default.createDirectory(at: sources, withIntermediateDirectories: true)
         try "hello".write(to: worktree.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
@@ -129,13 +186,46 @@ final class ShuttleShardWorkspaceToolsTests: XCTestCase {
         return (root, worktree, root.appendingPathComponent("outside.txt"))
     }
 
+    private func makeGitWorktreeFixture() throws -> (root: URL, bareRepository: URL, worktree: URL) {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let origin = root.appendingPathComponent("origin", isDirectory: true)
+        let bareRepository = root.appendingPathComponent("repository.git", isDirectory: true)
+        let worktree = root.appendingPathComponent("wt", isDirectory: true)
+
+        try FileManager.default.createDirectory(at: origin, withIntermediateDirectories: true)
+        _ = try ShuttleGitShell.run(["init", "--initial-branch=main", origin.path])
+        _ = try ShuttleGitShell.run(["-C", origin.path, "config", "user.email", "test@example.com"])
+        _ = try ShuttleGitShell.run(["-C", origin.path, "config", "user.name", "Test User"])
+        try "hello\n".write(to: origin.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
+        _ = try ShuttleGitShell.run(["-C", origin.path, "add", "README.md"])
+        _ = try ShuttleGitShell.run(["-C", origin.path, "commit", "-m", "Initial commit"])
+
+        _ = try ShuttleGitShell.run(["clone", "--bare", origin.path, bareRepository.path])
+        _ = try ShuttleGitShell.run([
+            "--git-dir",
+            bareRepository.path,
+            "worktree",
+            "add",
+            "-b",
+            "shuttle/test-worktree",
+            worktree.path,
+            "main",
+        ])
+        try "gitdir: \(bareRepository.path)/worktrees/wt\n".write(
+            to: worktree.appendingPathComponent(".git"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        return (root, bareRepository, worktree)
+    }
+
     private func makeWorkspaceService(
         config: ShuttleConfig,
         databasePath: String
     ) throws -> ShuttleShardWorkspaceService {
-        let dbQueue = try ShuttleDatabase.openMigrated(atPath: databasePath)
         return ShuttleShardWorkspaceService(
-            shardStore: ShuttleShardStore(dbQueue: dbQueue),
+            shardStore: try makeShardStore(databasePath: databasePath),
             worktreeManager: ShuttleWorktreeManager(
                 bareRepositoryPath: ShuttleRepositoryBootstrapper.repositoryPath(for: config),
                 worktreesRootPath: config.paths.worktreesPath
@@ -179,6 +269,11 @@ final class ShuttleShardWorkspaceToolsTests: XCTestCase {
             commandLogStore: commandLogStore,
             config: config
         )
+    }
+
+    private func makeShardStore(databasePath: String) throws -> ShuttleShardStore {
+        let dbQueue = try ShuttleDatabase.openMigrated(atPath: databasePath)
+        return ShuttleShardStore(dbQueue: dbQueue)
     }
 
     private func makeDockerAccessController(
@@ -289,4 +384,3 @@ private actor FakeWorkspaceToolDockerBackend {
         execCalls
     }
 }
-
