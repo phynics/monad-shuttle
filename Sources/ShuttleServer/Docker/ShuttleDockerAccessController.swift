@@ -65,4 +65,8 @@ actor ShuttleDockerAccessController {
     func stopContainer(named name: String) async throws {
         try await client.stopContainer(named: name)
     }
+
+    func execInContainer(_ request: ShuttleDockerExecRequest) async throws -> ShuttleDockerExecResult {
+        try await client.execInContainer(request)
+    }
 }

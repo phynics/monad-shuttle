@@ -79,6 +79,7 @@ public struct ShuttleDockerClient: Sendable {
     let createContainerHandler: @Sendable (ShuttleDockerCreateContainerRequest) async throws -> ShuttleDockerContainerInspection
     let inspectContainerHandler: @Sendable (String) async throws -> ShuttleDockerContainerInspection?
     let stopContainerHandler: @Sendable (String) async throws -> Void
+    let execInContainerHandler: @Sendable (ShuttleDockerExecRequest) async throws -> ShuttleDockerExecResult
 
     public init(
         probeAvailability: @escaping @Sendable () async -> ShuttleDockerAvailability,
@@ -90,12 +91,16 @@ public struct ShuttleDockerClient: Sendable {
         },
         stopContainer: @escaping @Sendable (String) async throws -> Void = { name in
             throw ShuttleDockerClientError.unsupportedOperation("stop_container:\(name)")
+        },
+        execInContainer: @escaping @Sendable (ShuttleDockerExecRequest) async throws -> ShuttleDockerExecResult = { request in
+            throw ShuttleDockerClientError.unsupportedOperation("exec_container:\(request.containerName)")
         }
     ) {
         self.probeAvailability = probeAvailability
         self.createContainerHandler = createContainer
         self.inspectContainerHandler = inspectContainer
         self.stopContainerHandler = stopContainer
+        self.execInContainerHandler = execInContainer
     }
 
     func probe() async -> ShuttleDockerAvailability {
@@ -112,6 +117,10 @@ public struct ShuttleDockerClient: Sendable {
 
     func stopContainer(named name: String) async throws {
         try await stopContainerHandler(name)
+    }
+
+    func execInContainer(_ request: ShuttleDockerExecRequest) async throws -> ShuttleDockerExecResult {
+        try await execInContainerHandler(request)
     }
 
     public static func live(
