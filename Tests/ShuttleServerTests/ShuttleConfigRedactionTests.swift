@@ -95,6 +95,7 @@ final class ShuttleConfigRedactionTests: XCTestCase {
                 instructions: .init(filePath: "/config/shuttle-instructions.md"),
                 server: .init(host: "0.0.0.0", port: 8080)
             ),
+            managedRepository: nil,
             statusStore: ShuttleServerStatusStore()
         )
         let router = ShuttleServerApp.makeRouter(environment: environment)

@@ -64,6 +64,7 @@ final class ShuttleStartupValidationTests: XCTestCase {
         configFile: URL,
         databaseDirectory: URL
     ) {
+        let repositoryFixture = try ShuttleGitTestFixture.create()
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let db = root.appendingPathComponent("db", isDirectory: true)
         let git = root.appendingPathComponent("git", isDirectory: true)
@@ -87,8 +88,8 @@ final class ShuttleStartupValidationTests: XCTestCase {
 
         let configYAML = """
         repository:
-          url: git@github.com:example/repo.git
-          source_branch: main
+          url: \(repositoryFixture.originBareRepository.path)
+          source_branch: \(repositoryFixture.branch)
           ssh_key_path: \(sshKey.path)
 
         runtime:

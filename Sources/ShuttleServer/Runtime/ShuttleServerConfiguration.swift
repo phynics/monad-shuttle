@@ -57,4 +57,5 @@ public enum ShuttleStartupError: Error, Equatable, Sendable {
     case unreadableConfigPath(String)
     case invalidVolumePath(subsystem: String, path: String)
     case unreadableSSHKeyPath(String)
+    case gitOperationFailed(String)
 }

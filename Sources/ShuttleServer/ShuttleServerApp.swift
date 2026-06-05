@@ -5,15 +5,18 @@ public enum ShuttleServerApp {
     public struct Environment: Sendable {
         public let configuration: ShuttleServerConfiguration
         let loadedConfig: ShuttleConfig?
+        let managedRepository: ShuttleRepositoryBootstrapResult?
         public let statusStore: ShuttleServerStatusStore
 
         init(
             configuration: ShuttleServerConfiguration,
             loadedConfig: ShuttleConfig?,
+            managedRepository: ShuttleRepositoryBootstrapResult?,
             statusStore: ShuttleServerStatusStore
         ) {
             self.configuration = configuration
             self.loadedConfig = loadedConfig
+            self.managedRepository = managedRepository
             self.statusStore = statusStore
         }
     }
@@ -27,6 +30,7 @@ public enum ShuttleServerApp {
         statusStore: ShuttleServerStatusStore = ShuttleServerStatusStore()
     ) async throws -> Environment {
         var loadedConfig: ShuttleConfig?
+        var managedRepository: ShuttleRepositoryBootstrapResult?
 
         if let configPath = configuration.configPath,
            !FileManager.default.isReadableFile(atPath: configPath) {
@@ -46,6 +50,10 @@ public enum ShuttleServerApp {
                     configPath: configPath,
                     statusStore: statusStore
                 )
+                managedRepository = try await bootstrapManagedRepository(
+                    loadedConfig: loadedConfig,
+                    statusStore: statusStore
+                )
             } catch let startupError as ShuttleStartupError {
                 throw startupError
             } catch {
@@ -61,6 +69,7 @@ public enum ShuttleServerApp {
         return Environment(
             configuration: configuration,
             loadedConfig: loadedConfig,
+            managedRepository: managedRepository,
             statusStore: statusStore
         )
     }
@@ -107,6 +116,42 @@ public enum ShuttleServerApp {
                 detail: "Unreadable SSH key path: \(loadedConfig.repository.sshKeyPath)",
                 error: .unreadableSSHKeyPath(loadedConfig.repository.sshKeyPath)
             )
+        }
+    }
+
+    private static func bootstrapManagedRepository(
+        loadedConfig: ShuttleConfig?,
+        statusStore: ShuttleServerStatusStore
+    ) async throws -> ShuttleRepositoryBootstrapResult? {
+        guard let loadedConfig else {
+            return nil
+        }
+
+        do {
+            return try ShuttleRepositoryBootstrapper.bootstrap(config: loadedConfig)
+        } catch let startupError as ShuttleStartupError {
+            await statusStore.setServerState(.fatal)
+            await statusStore.setSubsystem(
+                "git",
+                status: .init(status: .failed, detail: String(describing: startupError))
+            )
+            throw startupError
+        } catch let shellError as ShuttleGitShellError {
+            let detail: String
+            switch shellError {
+            case .commandFailed(let command, let status, let stderr):
+                detail = "Git command failed (\(status)): git \(command.joined(separator: " ")) \(stderr)"
+            case .invalidOutputEncoding(let command):
+                detail = "Git output decoding failed: git \(command.joined(separator: " "))"
+            }
+            await statusStore.setServerState(.fatal)
+            await statusStore.setSubsystem("git", status: .init(status: .failed, detail: detail))
+            throw ShuttleStartupError.gitOperationFailed(detail)
+        } catch {
+            let detail = "Unexpected git bootstrap error: \(error)"
+            await statusStore.setServerState(.fatal)
+            await statusStore.setSubsystem("git", status: .init(status: .failed, detail: detail))
+            throw ShuttleStartupError.gitOperationFailed(detail)
         }
     }
 
