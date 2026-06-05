@@ -53,4 +53,16 @@ actor ShuttleDockerAccessController {
         try await requireAvailable(for: operation)
         return try await body()
     }
+
+    func createContainer(_ request: ShuttleDockerCreateContainerRequest) async throws -> ShuttleDockerContainerInspection {
+        try await client.createContainer(request)
+    }
+
+    func inspectContainer(named name: String) async throws -> ShuttleDockerContainerInspection? {
+        try await client.inspectContainer(named: name)
+    }
+
+    func stopContainer(named name: String) async throws {
+        try await client.stopContainer(named: name)
+    }
 }

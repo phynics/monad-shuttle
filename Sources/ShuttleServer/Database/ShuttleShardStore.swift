@@ -155,6 +155,33 @@ struct ShuttleShardStore {
         }
     }
 
+    func updateContainerMetadata(
+        shardID: String,
+        containerName: String,
+        containerStatus: String,
+        updatedAt: Date = Date()
+    ) throws {
+        try dbQueue.write { db in
+            try db.execute(
+                sql: """
+                UPDATE shard_runtime_metadata
+                SET container_name = ?, container_status = ?, updated_at = ?
+                WHERE shard_id = ?
+                """,
+                arguments: [
+                    containerName,
+                    containerStatus,
+                    updatedAt,
+                    shardID,
+                ]
+            )
+
+            if db.changesCount == 0 {
+                throw ShuttleShardStoreError.shardNotFound(shardID)
+            }
+        }
+    }
+
     private func fetchShard(id: String, db: Database) throws -> ShuttleStoredShard? {
         guard let row = try Row.fetchOne(
             db,
