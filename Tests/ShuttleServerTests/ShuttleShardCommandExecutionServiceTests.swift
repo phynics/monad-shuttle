@@ -189,7 +189,12 @@ final class ShuttleShardCommandExecutionServiceTests: XCTestCase {
             statusStore: statusStore
         )
         let shardStore = ShuttleShardStore(dbQueue: dbQueue)
-        let commandLogStore = ShuttleCommandLogStore(dbQueue: dbQueue, logsRootPath: config.paths.logsPath)
+        let commandLogStore = ShuttleCommandLogStore(
+            dbQueue: dbQueue,
+            logsRootPath: config.paths.logsPath,
+            retentionDays: config.retention.rawLogsDays,
+            maxBytesPerFile: config.limits.maxLogBytesPerShard
+        )
         return ShuttleShardCommandExecutionService(
             shardStore: shardStore,
             dockerAccessController: accessController,

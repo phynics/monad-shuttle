@@ -4,15 +4,25 @@ import GRDB
 struct ShuttleCommandLogStore {
     let dbQueue: DatabaseQueue
     let logsRootPath: String
+    let retentionDays: Int
+    let maxBytesPerFile: Int
+
+    struct CleanupResult: Equatable, Sendable {
+        let deletedIndexCount: Int
+        let deletedFileCount: Int
+    }
 
     func append(_ entry: ShuttleCommandLogEntry) throws {
-        let directory = URL(fileURLWithPath: logsRootPath, isDirectory: true)
-            .appendingPathComponent(entry.shardID, isDirectory: true)
+        let directory = shardDirectory(shardID: entry.shardID)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
-        let fileURL = directory.appendingPathComponent("commands.jsonl")
         let data = try JSONEncoder().encode(entry)
         let line = data + Data([0x0A])
+        let fileURL = try activeLogFileURL(
+            shardID: entry.shardID,
+            stream: "command",
+            nextLineBytes: line.count
+        )
 
         let startOffset: Int64
         if FileManager.default.fileExists(atPath: fileURL.path) {
@@ -46,6 +56,62 @@ struct ShuttleCommandLogStore {
         }
     }
 
+    @discardableResult
+    func cleanupExpiredEntries(now: Date = Date()) throws -> CleanupResult {
+        let cutoff = now.addingTimeInterval(Double(-retentionDays * 24 * 60 * 60))
+
+        let expiredRows: [(id: Int64, filePath: String)] = try dbQueue.read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                SELECT id, file_path
+                FROM log_indexes
+                WHERE created_at < ?
+                ORDER BY id ASC
+                """,
+                arguments: [cutoff]
+            ).map { row in
+                (id: row["id"], filePath: row["file_path"])
+            }
+        }
+
+        guard !expiredRows.isEmpty else {
+            return CleanupResult(deletedIndexCount: 0, deletedFileCount: 0)
+        }
+
+        let expiredIDs = expiredRows.map(\.id)
+        let candidatePaths = Set(expiredRows.map(\.filePath))
+
+        try dbQueue.write { db in
+            for id in expiredIDs {
+                try db.execute(
+                    sql: "DELETE FROM log_indexes WHERE id = ?",
+                    arguments: [id]
+                )
+            }
+        }
+
+        var deletedFiles = 0
+        for path in candidatePaths {
+            let remainingCount: Int = try dbQueue.read { db in
+                try Int.fetchOne(
+                    db,
+                    sql: "SELECT COUNT(*) FROM log_indexes WHERE file_path = ?",
+                    arguments: [path]
+                ) ?? 0
+            }
+            if remainingCount == 0, FileManager.default.fileExists(atPath: path) {
+                try FileManager.default.removeItem(atPath: path)
+                deletedFiles += 1
+            }
+        }
+
+        return CleanupResult(
+            deletedIndexCount: expiredIDs.count,
+            deletedFileCount: deletedFiles
+        )
+    }
+
     func fetchEntries(shardID: String) throws -> [ShuttleCommandLogEntry] {
         try dbQueue.read { db in
             let rows = try Row.fetchAll(
@@ -71,5 +137,48 @@ struct ShuttleCommandLogStore {
                 return try JSONDecoder().decode(ShuttleCommandLogEntry.self, from: Data(trimmed))
             }
         }
+    }
+
+    private func shardDirectory(shardID: String) -> URL {
+        URL(fileURLWithPath: logsRootPath, isDirectory: true)
+            .appendingPathComponent(shardID, isDirectory: true)
+    }
+
+    private func activeLogFileURL(
+        shardID: String,
+        stream: String,
+        nextLineBytes: Int
+    ) throws -> URL {
+        let directory = shardDirectory(shardID: shardID)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let existingFiles = try FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.fileSizeKey],
+            options: [.skipsHiddenFiles]
+        ).filter { $0.lastPathComponent.hasPrefix("\(stream)-") && $0.pathExtension == "jsonl" }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+
+        let current = existingFiles.last ?? directory.appendingPathComponent("\(stream)-0001.jsonl")
+        if !FileManager.default.fileExists(atPath: current.path) {
+            return current
+        }
+
+        let attributes = try FileManager.default.attributesOfItem(atPath: current.path)
+        let currentSize = (attributes[.size] as? NSNumber)?.intValue ?? 0
+        if currentSize + nextLineBytes <= maxBytesPerFile {
+            return current
+        }
+
+        let nextIndex = (extractFileIndex(from: current.lastPathComponent) ?? 1) + 1
+        return directory.appendingPathComponent("\(stream)-\(String(format: "%04d", nextIndex)).jsonl")
+    }
+
+    private func extractFileIndex(from fileName: String) -> Int? {
+        let stem = (fileName as NSString).deletingPathExtension
+        guard let suffix = stem.split(separator: "-").last else {
+            return nil
+        }
+        return Int(suffix)
     }
 }
