@@ -15,6 +15,7 @@ struct ShuttleStoredRepositoryState: Equatable, Sendable {
 
 enum ShuttleRepositoryStateStoreError: Error, Equatable, Sendable {
     case invalidIntegrationState(String)
+    case stateMismatch(expected: ShuttleRepositoryState, actual: ShuttleRepositoryState)
 }
 
 struct ShuttleRepositoryStateStore {
@@ -113,5 +114,82 @@ struct ShuttleRepositoryStateStore {
                 )
             }
         }
+    }
+
+    func transitionIntegrationState(
+        from expected: ShuttleRepositoryState,
+        to next: ShuttleRepositoryState,
+        config: ShuttleConfig,
+        upstreamHeadCommit: String? = nil,
+        shuttleMainCommit: String? = nil,
+        blockedConflictID: String? = nil,
+        updatedAt: Date = Date()
+    ) throws {
+        try dbQueue.write { db in
+            let currentState = try currentIntegrationState(db: db)
+            guard currentState == expected else {
+                throw ShuttleRepositoryStateStoreError.stateMismatch(expected: expected, actual: currentState)
+            }
+
+            let existingID = try Int64.fetchOne(
+                db,
+                sql: "SELECT id FROM repository_state ORDER BY id ASC LIMIT 1"
+            )
+
+            if let existingID {
+                try db.execute(
+                    sql: """
+                    UPDATE repository_state
+                    SET repo_url = ?, source_branch = ?, shuttle_main_branch = ?, upstream_head_commit = ?,
+                        shuttle_main_commit = ?, integration_state = ?, blocked_conflict_id = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    arguments: [
+                        config.repository.url,
+                        config.repository.sourceBranch,
+                        ShuttleRepositoryBootstrapper.shuttleMainBranch,
+                        upstreamHeadCommit,
+                        shuttleMainCommit,
+                        next.rawValue,
+                        blockedConflictID,
+                        updatedAt,
+                        existingID,
+                    ]
+                )
+            } else {
+                try db.execute(
+                    sql: """
+                    INSERT INTO repository_state
+                    (repo_url, source_branch, shuttle_main_branch, upstream_head_commit, shuttle_main_commit,
+                     integration_state, blocked_conflict_id, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    arguments: [
+                        config.repository.url,
+                        config.repository.sourceBranch,
+                        ShuttleRepositoryBootstrapper.shuttleMainBranch,
+                        upstreamHeadCommit,
+                        shuttleMainCommit,
+                        next.rawValue,
+                        blockedConflictID,
+                        updatedAt,
+                        updatedAt,
+                    ]
+                )
+            }
+        }
+    }
+
+    private func currentIntegrationState(db: Database) throws -> ShuttleRepositoryState {
+        guard let rawValue = try String.fetchOne(
+            db,
+            sql: "SELECT integration_state FROM repository_state ORDER BY id ASC LIMIT 1"
+        ) else {
+            return .open
+        }
+        guard let state = ShuttleRepositoryState(rawValue: rawValue) else {
+            throw ShuttleRepositoryStateStoreError.invalidIntegrationState(rawValue)
+        }
+        return state
     }
 }
