@@ -1,110 +1,60 @@
 import Foundation
 import GRDB
-import PositronicKit
-import PKShared
 import XCTest
 @testable import ShuttleServer
 
-final class ShuttleShardAgentRunnerTests: XCTestCase {
-    func testRunShardBuildsPromptFromDeploymentInstructionsRepoGuidanceAndShardSpec() async throws {
-        let fixture = try await makeFixture()
-        try """
-        Follow Shuttle deployment policy.
-        """.write(to: URL(fileURLWithPath: fixture.config.instructions.filePath), atomically: true, encoding: .utf8)
-        try """
-        Repo guidance from AGENTS.md.
-        """.write(to: fixture.worktreeURL.appendingPathComponent("AGENTS.md"), atomically: true, encoding: .utf8)
+final class ShuttleShardFinishRequestServiceTests: XCTestCase {
+    func testRequestFinishOnRunningShardAppendsInstructionWithoutChangingState() async throws {
+        let fixture = try await makeFixture(initialState: .running)
 
-        await fixture.llm.enqueueTextResponse("Work complete.")
+        try await fixture.service.requestFinish(shardID: fixture.shardID)
 
+        let shard = try XCTUnwrap(fixture.shardStore.fetchShard(id: fixture.shardID))
+        XCTAssertEqual(shard.state, .running)
+
+        let instructions = try fixture.auditStore.fetchPendingSystemInstructions(shardID: fixture.shardID)
+        XCTAssertEqual(instructions.count, 1)
+        XCTAssertTrue(instructions[0].contains("finish this shard"))
+
+        await fixture.llm.enqueueTextResponse("Acknowledged.")
         _ = try await fixture.runner.runShard(shardID: fixture.shardID)
 
         let lastRequest = await fixture.llm.lastRequest()
-        let recorded = try XCTUnwrap(lastRequest)
-        let systemMessage = try XCTUnwrap(recorded.messages.first(where: { $0.role == .system }))
-        let userMessage = try XCTUnwrap(recorded.messages.last(where: { $0.role == .user }))
-
-        XCTAssertTrue(systemMessage.content.contains("Follow Shuttle deployment policy."))
-        XCTAssertTrue(systemMessage.content.contains("Repo guidance from AGENTS.md."))
-        XCTAssertTrue(userMessage.content.contains("Implement the shard agent runner"))
-
-        let expectedToolIDs = Set(
-            ShuttleShardWorkspaceToolFactory.makeAllTools(
-                shardID: fixture.shardID,
-                worktreePath: fixture.worktreeURL.path,
-                commandService: fixture.commandService,
-                lifecycleService: fixture.lifecycleService
-            ).map(\.id)
-        )
-        XCTAssertEqual(Set(recorded.toolIDs), expectedToolIDs)
+        let request = try XCTUnwrap(lastRequest)
+        let systemMessage = try XCTUnwrap(request.messages.first(where: { $0.role == .system }))
+        XCTAssertTrue(systemMessage.content.contains("finish this shard"))
     }
 
-    func testRunShardWritesTranscriptEventsToRawLogsAndIndexes() async throws {
-        let fixture = try await makeFixture()
-        await fixture.llm.enqueueTextResponse("Transcript me.")
+    func testRequestFinishRejectsNonRunningShard() async throws {
+        let fixture = try await makeFixture(initialState: .needsInput)
 
-        let result = try await fixture.runner.runShard(shardID: fixture.shardID)
-        XCTAssertFalse(result.events.isEmpty)
-
-        let transcriptEntries = try fixture.transcriptStore.fetchEntries(shardID: fixture.shardID)
-        XCTAssertFalse(transcriptEntries.isEmpty)
-        XCTAssertTrue(transcriptEntries.contains(where: {
-            if case .delta(event: .generation(text: "Transcript me.")) = $0.event {
-                return true
-            }
-            return false
-        }))
-
-        let logIndexCount = try await fixture.dbQueue.read { db in
-            try Int.fetchOne(
-                db,
-                sql: "SELECT COUNT(*) FROM log_indexes WHERE shard_id = ? AND stream = 'agent'",
-                arguments: [fixture.shardID]
-            ) ?? 0
+        do {
+            try await fixture.service.requestFinish(shardID: fixture.shardID)
+            XCTFail("Expected requestFinish to reject non-running shard")
+        } catch {
+            XCTAssertEqual(error as? ShuttleShardFinishRequestServiceError, .invalidShardState("needs_input"))
         }
-        XCTAssertGreaterThan(logIndexCount, 0)
+
+        let instructions = try fixture.auditStore.fetchPendingSystemInstructions(shardID: fixture.shardID)
+        XCTAssertTrue(instructions.isEmpty)
     }
 
-    func testRunShardCanFinishShardThroughLifecycleTool() async throws {
-        let fixture = try await makeFixture()
-        await fixture.llm.enqueueToolCallTurn(calls: [
-            .init(
-                id: "finish-1",
-                name: "finish_shard",
-                arguments: #"{"summary":"Implemented shard agent runner","files_changed":["Sources/ShuttleServer/Agents/ShuttleShardAgentRunner.swift"],"checks":[{"name":"swift test","status":"passed","kind":"validation_command"}],"risks":[]}"#
-            ),
-        ])
-        await fixture.llm.enqueueTextResponse("Shard finished.")
+    func testRequestFinishRejectsAlreadyFinishedShard() async throws {
+        let fixture = try await makeFixture(initialState: .done)
 
-        _ = try await fixture.runner.runShard(shardID: fixture.shardID)
+        do {
+            try await fixture.service.requestFinish(shardID: fixture.shardID)
+            XCTFail("Expected requestFinish to reject finished shard")
+        } catch {
+            XCTAssertEqual(error as? ShuttleShardFinishRequestServiceError, .invalidShardState("done"))
+        }
 
-        let shard = try XCTUnwrap(fixture.shardStore.fetchShard(id: fixture.shardID))
-        XCTAssertEqual(shard.state, .integrating)
-
-        let report = try XCTUnwrap(fixture.completionReportStore.fetch(shardID: fixture.shardID))
-        XCTAssertEqual(report.summary, "Implemented shard agent runner")
+        let instructions = try fixture.auditStore.fetchPendingSystemInstructions(shardID: fixture.shardID)
+        XCTAssertTrue(instructions.isEmpty)
     }
 
-    func testRunShardCanRequestInputThroughLifecycleTool() async throws {
-        let fixture = try await makeFixture()
-        await fixture.llm.enqueueToolCallTurn(calls: [
-            .init(
-                id: "input-1",
-                name: "request_input",
-                arguments: #"{"question":"Which remote branch should Shuttle push?","details":"The shard is complete but the target branch is unspecified."}"#
-            ),
-        ])
-        await fixture.llm.enqueueTextResponse("Awaiting input.")
-
-        _ = try await fixture.runner.runShard(shardID: fixture.shardID)
-
-        let shard = try XCTUnwrap(fixture.shardStore.fetchShard(id: fixture.shardID))
-        XCTAssertEqual(shard.state, .needsInput)
-    }
-
-    private func makeFixture() async throws -> Fixture {
-        let gitFixture = try ShuttleGitTestFixture.create()
-        let root = gitFixture.root.appendingPathComponent("agent-runner", isDirectory: true)
+    private func makeFixture(initialState: ShuttleShardState) async throws -> Fixture {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let databaseRoot = root.appendingPathComponent("database", isDirectory: true)
         let gitRoot = root.appendingPathComponent("git", isDirectory: true)
         let worktreesRoot = root.appendingPathComponent("worktrees", isDirectory: true)
@@ -117,7 +67,14 @@ final class ShuttleShardAgentRunnerTests: XCTestCase {
         try FileManager.default.createDirectory(at: logsRoot, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: configRoot, withIntermediateDirectories: true)
 
+        let gitFixture = try ShuttleGitTestFixture.create()
         let instructionsPath = configRoot.appendingPathComponent("shuttle-instructions.md").path
+        try "Default Shuttle instructions.".write(
+            to: URL(fileURLWithPath: instructionsPath),
+            atomically: true,
+            encoding: .utf8
+        )
+
         let config = ShuttleConfig(
             repository: .init(url: gitFixture.originBareRepository.path, sourceBranch: gitFixture.branch, sshKeyPath: "/tmp/unused-key"),
             runtime: .init(
@@ -139,11 +96,6 @@ final class ShuttleShardAgentRunnerTests: XCTestCase {
             instructions: .init(filePath: instructionsPath),
             server: .init(host: "127.0.0.1", port: 8080)
         )
-        try "Default Shuttle instructions.".write(
-            to: URL(fileURLWithPath: instructionsPath),
-            atomically: true,
-            encoding: .utf8
-        )
 
         _ = try ShuttleRepositoryBootstrapper.bootstrap(config: config)
 
@@ -157,11 +109,14 @@ final class ShuttleShardAgentRunnerTests: XCTestCase {
             )
         )
         let shard = try workspaceService.createQueuedShard(
-            id: "shard-agent-runner-abcdef12",
-            title: "Agent runner",
-            spec: "Implement the shard agent runner and report completion.",
-            branchName: "shuttle/shards/agent-runner-abcdef12"
+            id: "shard-request-finish-abcdef12",
+            title: "Finish request shard",
+            spec: "Implement the request-finish flow.",
+            branchName: "shuttle/shards/request-finish-abcdef12"
         )
+        if initialState != .queued {
+            try shardStore.updateState(shardID: shard.id, to: initialState)
+        }
 
         let dockerBackend = ShuttleTestDockerExecBackend()
         let statusStore = ShuttleServerStatusStore()
@@ -215,35 +170,29 @@ final class ShuttleShardAgentRunnerTests: XCTestCase {
             commandService: commandService,
             lifecycleService: lifecycleService,
             transcriptStore: transcriptStore,
-            llmService: llm
+            llmService: llm,
+            auditEventStore: auditStore
         )
 
         return Fixture(
-            dbQueue: dbQueue,
-            config: config,
             shardID: shard.id,
-            worktreeURL: URL(fileURLWithPath: shard.worktreePath, isDirectory: true),
             shardStore: shardStore,
-            commandService: commandService,
-            lifecycleService: lifecycleService,
-            completionReportStore: completionReportStore,
-            transcriptStore: transcriptStore,
+            auditStore: auditStore,
             llm: llm,
-            runner: runner
+            runner: runner,
+            service: ShuttleShardFinishRequestService(
+                shardStore: shardStore,
+                auditEventStore: auditStore
+            )
         )
     }
 }
 
 private struct Fixture {
-    let dbQueue: DatabaseQueue
-    let config: ShuttleConfig
     let shardID: String
-    let worktreeURL: URL
     let shardStore: ShuttleShardStore
-    let commandService: ShuttleShardCommandExecutionService
-    let lifecycleService: ShuttleShardLifecycleService
-    let completionReportStore: ShuttleCompletionReportStore
-    let transcriptStore: ShuttleAgentTranscriptStore
+    let auditStore: ShuttleAuditEventStore
     let llm: ShuttleTestLLMService
     let runner: ShuttleShardAgentRunner
+    let service: ShuttleShardFinishRequestService
 }

@@ -21,6 +21,25 @@ struct ShuttleShardAgentRunner {
     let lifecycleService: ShuttleShardLifecycleService
     let transcriptStore: ShuttleAgentTranscriptStore
     let llmService: any LLMServiceProtocol
+    let auditEventStore: ShuttleAuditEventStore?
+
+    init(
+        config: ShuttleConfig,
+        shardStore: ShuttleShardStore,
+        commandService: ShuttleShardCommandExecutionService,
+        lifecycleService: ShuttleShardLifecycleService,
+        transcriptStore: ShuttleAgentTranscriptStore,
+        llmService: any LLMServiceProtocol,
+        auditEventStore: ShuttleAuditEventStore? = nil
+    ) {
+        self.config = config
+        self.shardStore = shardStore
+        self.commandService = commandService
+        self.lifecycleService = lifecycleService
+        self.transcriptStore = transcriptStore
+        self.llmService = llmService
+        self.auditEventStore = auditEventStore
+    }
 
     func runShard(
         shardID: String,
@@ -36,7 +55,10 @@ struct ShuttleShardAgentRunner {
             commandService: commandService,
             lifecycleService: lifecycleService
         )
-        let systemInstructions = try buildSystemInstructions(worktreePath: runtimeMetadata.worktreePath)
+        let systemInstructions = try buildSystemInstructions(
+            shardID: shardID,
+            worktreePath: runtimeMetadata.worktreePath
+        )
         let timelineID = UUID()
 
         let messageStore = InMemoryMessageStore()
@@ -130,7 +152,10 @@ struct ShuttleShardAgentRunner {
         }
     }
 
-    private func buildSystemInstructions(worktreePath: String) throws -> String {
+    private func buildSystemInstructions(
+        shardID: String,
+        worktreePath: String
+    ) throws -> String {
         guard FileManager.default.fileExists(atPath: config.instructions.filePath) else {
             throw ShuttleShardAgentRunnerError.missingInstructions(config.instructions.filePath)
         }
@@ -163,6 +188,17 @@ struct ShuttleShardAgentRunner {
                 """
                 Repository guidance from AGENTS.md:
                 \(repositoryGuidance)
+                """
+            )
+        }
+
+        if let auditEventStore,
+           let pendingInstructions = try? auditEventStore.fetchPendingSystemInstructions(shardID: shardID),
+           !pendingInstructions.isEmpty {
+            sections.append(
+                """
+                Pending system instructions:
+                \(pendingInstructions.joined(separator: "\n"))
                 """
             )
         }

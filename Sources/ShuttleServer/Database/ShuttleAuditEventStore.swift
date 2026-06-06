@@ -56,6 +56,20 @@ struct ShuttleAuditEventStore {
         )
     }
 
+    func recordShardFinishRequestedByOperator(
+        shardID: String,
+        instruction: String,
+        actor: ShuttleActorIdentity?
+    ) throws {
+        try append(
+            entityType: "shard",
+            entityID: shardID,
+            eventType: "shard_finish_requested_by_operator",
+            payload: ["instruction": instruction],
+            actor: actor
+        )
+    }
+
     func recordShardInputAnswered(
         shardID: String,
         answerSummary: String,
@@ -177,6 +191,28 @@ struct ShuttleAuditEventStore {
                     eventType: row["event_type"],
                     payload: payload
                 )
+            }
+        }
+    }
+
+    func fetchPendingSystemInstructions(shardID: String) throws -> [String] {
+        try dbQueue.read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                SELECT payload_json
+                FROM audit_events
+                WHERE entity_type = 'shard' AND entity_id = ? AND event_type = 'shard_finish_requested_by_operator'
+                ORDER BY id ASC
+                """,
+                arguments: [shardID]
+            ).compactMap { row in
+                let payloadJSON: String = row["payload_json"]
+                guard let payloadData = payloadJSON.data(using: .utf8),
+                      let payload = try? JSONDecoder().decode([String: String].self, from: payloadData) else {
+                    throw ShuttleAuditEventStoreError.invalidPayloadDecoding
+                }
+                return payload["instruction"]
             }
         }
     }

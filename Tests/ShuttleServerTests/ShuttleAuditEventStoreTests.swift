@@ -10,6 +10,11 @@ final class ShuttleAuditEventStoreTests: XCTestCase {
 
         try store.recordShardCreated(shardID: "shard-1", title: "Implement parser", actor: actor)
         try store.recordShardFinishRequested(shardID: "shard-1", actor: actor)
+        try store.recordShardFinishRequestedByOperator(
+            shardID: "shard-1",
+            instruction: "Finish this shard now.",
+            actor: actor
+        )
         try store.recordShardInputRequested(
             shardID: "shard-1",
             question: "Need deployment target",
@@ -37,10 +42,11 @@ final class ShuttleAuditEventStoreTests: XCTestCase {
         )
 
         let events = try store.fetchAll()
-        XCTAssertEqual(events.count, 8)
+        XCTAssertEqual(events.count, 9)
         XCTAssertEqual(events.map(\.eventType), [
             "shard_created",
             "shard_finish_requested",
+            "shard_finish_requested_by_operator",
             "shard_input_requested",
             "shard_input_answered",
             "shard_abandoned",
@@ -55,6 +61,9 @@ final class ShuttleAuditEventStoreTests: XCTestCase {
             XCTAssertFalse(event.entityType.isEmpty)
             XCTAssertFalse(event.entityID.isEmpty)
         }
+
+        let instructions = try store.fetchPendingSystemInstructions(shardID: "shard-1")
+        XCTAssertEqual(instructions, ["Finish this shard now."])
     }
 
     func testAuditEventsAreAppendOnlyAtDatabaseLevel() throws {
