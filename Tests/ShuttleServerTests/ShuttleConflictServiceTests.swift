@@ -4,6 +4,48 @@ import XCTest
 @testable import ShuttleServer
 
 final class ShuttleConflictServiceTests: XCTestCase {
+    func testResolveConflictRejectsDirtyRepository() throws {
+        let fixture = try makeFixture(
+            repositoryValidator: ShuttleConflictRepositoryValidator { _ in
+                throw ShuttleConflictResolutionValidationError.repositoryNotClean(paths: ["README.md"])
+            }
+        )
+        let conflict = try fixture.conflictService.recordUpstreamRefreshConflict(
+            details: ["reason": "merge_conflict", "upstream_ref": "origin/main"]
+        )
+
+        XCTAssertThrowsError(try fixture.conflictService.resolveConflict(conflictID: conflict.id)) { error in
+            XCTAssertEqual(
+                error as? ShuttleConflictResolutionValidationError,
+                .repositoryNotClean(paths: ["README.md"])
+            )
+        }
+
+        let stored = try XCTUnwrap(fixture.conflictStore.fetchConflict(id: conflict.id))
+        XCTAssertEqual(stored.state, "open")
+    }
+
+    func testResolveConflictRejectsActiveMergeState() throws {
+        let fixture = try makeFixture(
+            repositoryValidator: ShuttleConflictRepositoryValidator { _ in
+                throw ShuttleConflictResolutionValidationError.activeMergeState
+            }
+        )
+        let conflict = try fixture.conflictService.recordUpstreamRefreshConflict(
+            details: ["reason": "merge_conflict", "upstream_ref": "origin/main"]
+        )
+
+        XCTAssertThrowsError(try fixture.conflictService.resolveConflict(conflictID: conflict.id)) { error in
+            XCTAssertEqual(
+                error as? ShuttleConflictResolutionValidationError,
+                .activeMergeState
+            )
+        }
+
+        let stored = try XCTUnwrap(fixture.conflictStore.fetchConflict(id: conflict.id))
+        XCTAssertEqual(stored.state, "open")
+    }
+
     func testShardMergeConflictCreatesConflictRecordAndBlocksRepository() throws {
         let fixture = try makeFixture()
 
@@ -111,7 +153,56 @@ final class ShuttleConflictServiceTests: XCTestCase {
         XCTAssertEqual(conflicts[0].kind, "shard_merge")
     }
 
-    private func makeFixture() throws -> Fixture {
+    func testResolveOneOfMultipleConflictsKeepsRepositoryBlocked() throws {
+        let fixture = try makeFixture()
+        let first = try fixture.conflictService.recordUpstreamRefreshConflict(
+            details: ["reason": "merge_conflict", "upstream_ref": "origin/main"]
+        )
+        let second = try fixture.conflictService.recordShardMergeConflict(
+            sourceShardID: fixture.shard.id,
+            details: ["reason": "branch_not_mergeable"]
+        )
+
+        let resolved = try fixture.conflictService.resolveConflict(conflictID: first.id)
+        XCTAssertEqual(resolved.state, "resolved")
+
+        let repoState = try XCTUnwrap(fixture.repositoryStateStore.fetch())
+        XCTAssertEqual(repoState.integrationState, .blocked)
+        XCTAssertEqual(repoState.blockedConflictID, second.id)
+    }
+
+    func testResolveLastOpenConflictReopensRepositoryAndAuditsResolution() throws {
+        let fixture = try makeFixture()
+        let conflict = try fixture.conflictService.recordUpstreamRefreshConflict(
+            details: ["reason": "merge_conflict", "upstream_ref": "origin/main"]
+        )
+
+        let resolved = try fixture.conflictService.resolveConflict(
+            conflictID: conflict.id,
+            resolutionShardID: fixture.shard.id
+        )
+
+        XCTAssertEqual(resolved.state, "resolved")
+        XCTAssertEqual(resolved.resolutionShardID, fixture.shard.id)
+
+        let repoState = try XCTUnwrap(fixture.repositoryStateStore.fetch())
+        XCTAssertEqual(repoState.integrationState, .open)
+        XCTAssertNil(repoState.blockedConflictID)
+
+        let events = try fixture.auditEventStore.fetchAll()
+        XCTAssertTrue(
+            events.contains(where: {
+                $0.entityType == "conflict" &&
+                $0.entityID == conflict.id &&
+                $0.eventType == "conflict_resolved" &&
+                $0.payload["resolution_shard_id"] == fixture.shard.id
+            })
+        )
+    }
+
+    private func makeFixture(
+        repositoryValidator: ShuttleConflictRepositoryValidator = .live
+    ) throws -> Fixture {
         let gitFixture = try ShuttleGitTestFixture.create()
         let root = gitFixture.root.appendingPathComponent("conflicts", isDirectory: true)
         let databaseRoot = root.appendingPathComponent("database", isDirectory: true)
@@ -177,10 +268,13 @@ final class ShuttleConflictServiceTests: XCTestCase {
         try repositoryStateStore.upsert(config: config, integrationState: .open)
         let completionReportStore = ShuttleCompletionReportStore(dbQueue: dbQueue)
         let conflictStore = ShuttleConflictStore(dbQueue: dbQueue)
+        let auditEventStore = ShuttleAuditEventStore(dbQueue: dbQueue)
         let conflictService = ShuttleConflictService(
             repositoryStateStore: repositoryStateStore,
             conflictStore: conflictStore,
-            config: config
+            config: config,
+            auditEventStore: auditEventStore,
+            repositoryValidator: repositoryValidator
         )
         let gateService = ShuttleIntegrationGateService(
             config: config,
@@ -207,6 +301,7 @@ final class ShuttleConflictServiceTests: XCTestCase {
             repositoryStateStore: repositoryStateStore,
             conflictStore: conflictStore,
             conflictService: conflictService,
+            auditEventStore: auditEventStore,
             mergeService: mergeService
         )
     }
@@ -257,5 +352,6 @@ private struct Fixture {
     let repositoryStateStore: ShuttleRepositoryStateStore
     let conflictStore: ShuttleConflictStore
     let conflictService: ShuttleConflictService
+    let auditEventStore: ShuttleAuditEventStore
     let mergeService: ShuttleSquashMergeService
 }

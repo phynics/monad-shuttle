@@ -16,6 +16,8 @@ struct ShuttleStoredConflict: Equatable, Sendable {
 enum ShuttleConflictStoreError: Error, Equatable, Sendable {
     case invalidDetailsEncoding
     case invalidDetailsDecoding
+    case conflictNotFound(String)
+    case conflictAlreadyResolved(String)
 }
 
 struct ShuttleConflictStore {
@@ -78,6 +80,73 @@ struct ShuttleConflictStore {
                 ORDER BY created_at ASC, id ASC
                 """
             ).map(decodeConflict(row:))
+        }
+    }
+
+    func fetchConflict(id: String) throws -> ShuttleStoredConflict? {
+        try dbQueue.read { db in
+            guard let row = try Row.fetchOne(
+                db,
+                sql: """
+                SELECT id, kind, state, blocking, source_shard_id, resolution_shard_id, details_json, created_at, updated_at
+                FROM conflicts
+                WHERE id = ?
+                """,
+                arguments: [id]
+            ) else {
+                return nil
+            }
+            return try decodeConflict(row: row)
+        }
+    }
+
+    func markResolved(
+        conflictID: String,
+        resolutionShardID: String? = nil,
+        updatedAt: Date = Date()
+    ) throws -> ShuttleStoredConflict {
+        try dbQueue.write { db in
+            guard let existingRow = try Row.fetchOne(
+                db,
+                sql: """
+                SELECT id, kind, state, blocking, source_shard_id, resolution_shard_id, details_json, created_at, updated_at
+                FROM conflicts
+                WHERE id = ?
+                """,
+                arguments: [conflictID]
+            ) else {
+                throw ShuttleConflictStoreError.conflictNotFound(conflictID)
+            }
+
+            let existing = try decodeConflict(row: existingRow)
+            guard existing.state == "open" else {
+                throw ShuttleConflictStoreError.conflictAlreadyResolved(conflictID)
+            }
+
+            try db.execute(
+                sql: """
+                UPDATE conflicts
+                SET state = 'resolved', resolution_shard_id = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                arguments: [
+                    resolutionShardID,
+                    updatedAt,
+                    conflictID,
+                ]
+            )
+
+            return ShuttleStoredConflict(
+                id: existing.id,
+                kind: existing.kind,
+                state: "resolved",
+                blocking: existing.blocking,
+                sourceShardID: existing.sourceShardID,
+                resolutionShardID: resolutionShardID,
+                details: existing.details,
+                createdAt: existing.createdAt,
+                updatedAt: updatedAt
+            )
         }
     }
 
