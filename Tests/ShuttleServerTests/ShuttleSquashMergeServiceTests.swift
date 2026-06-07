@@ -146,7 +146,8 @@ final class ShuttleSquashMergeServiceTests: XCTestCase {
             shardStore: shardStore,
             repositoryStateStore: repositoryStateStore,
             integrationGateService: gateService,
-            shardWorkspaceService: workspaceService
+            shardWorkspaceService: workspaceService,
+            conflictService: nil
         )
 
         return Fixture(

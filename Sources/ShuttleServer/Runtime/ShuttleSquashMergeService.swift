@@ -9,6 +9,7 @@ struct ShuttleSquashMergeResult: Equatable, Sendable {
 enum ShuttleSquashMergeServiceError: Error, Equatable, Sendable {
     case integrationLocked(ShuttleRepositoryState)
     case shardNotReady(String)
+    case conflictRecorded(String)
     case mergeFailed(String)
 }
 
@@ -18,6 +19,7 @@ struct ShuttleSquashMergeService {
     let repositoryStateStore: ShuttleRepositoryStateStore
     let integrationGateService: ShuttleIntegrationGateService
     let shardWorkspaceService: ShuttleShardWorkspaceService
+    let conflictService: ShuttleConflictService?
 
     func merge(shardID: String) throws -> ShuttleSquashMergeResult {
         guard let shard = try shardStore.fetchShard(id: shardID) else {
@@ -34,6 +36,12 @@ struct ShuttleSquashMergeService {
             switch error {
             case .repositoryNotOpen(let state):
                 throw ShuttleSquashMergeServiceError.integrationLocked(state)
+            case .branchNotMergeable:
+                let conflict = try recordMergeConflict(
+                    shardID: shardID,
+                    reason: "branch_not_mergeable"
+                )
+                throw ShuttleSquashMergeServiceError.conflictRecorded(conflict.id)
             default:
                 throw ShuttleSquashMergeServiceError.mergeFailed(String(describing: error))
             }
@@ -74,13 +82,26 @@ struct ShuttleSquashMergeService {
                 retainedUntil: retainedUntil
             )
         } catch let error as ShuttleSquashMergeServiceError {
-            _ = try? repositoryStateStore.transitionIntegrationState(
-                from: .integrating,
-                to: .open,
-                config: config
-            )
+            if case .conflictRecorded = error {
+                // Repository is intentionally left blocked.
+            } else {
+                _ = try? repositoryStateStore.transitionIntegrationState(
+                    from: .integrating,
+                    to: .open,
+                    config: config
+                )
+            }
             throw error
         } catch {
+            if case let .commandFailed(_, _, stderr) = error as? ShuttleGitShellError,
+               stderr.localizedCaseInsensitiveContains("conflict") {
+                let conflict = try recordMergeConflict(
+                    shardID: shardID,
+                    reason: "merge_conflict"
+                )
+                throw ShuttleSquashMergeServiceError.conflictRecorded(conflict.id)
+            }
+
             _ = try? repositoryStateStore.transitionIntegrationState(
                 from: .integrating,
                 to: .open,
@@ -150,5 +171,18 @@ struct ShuttleSquashMergeService {
             _ = try? ShuttleGitShell.run(["merge", "--abort"], workingDirectory: tempURL.path)
             throw ShuttleSquashMergeServiceError.mergeFailed(error.localizedDescription)
         }
+    }
+
+    private func recordMergeConflict(
+        shardID: String,
+        reason: String
+    ) throws -> ShuttleStoredConflict {
+        guard let conflictService else {
+            throw ShuttleSquashMergeServiceError.mergeFailed("merge conflict recorded without conflict service")
+        }
+        return try conflictService.recordShardMergeConflict(
+            sourceShardID: shardID,
+            details: ["reason": reason]
+        )
     }
 }
