@@ -150,17 +150,22 @@ struct ShuttleAuditEventStore {
         target: String,
         ref: String,
         result: String,
+        warnings: [String] = [],
         actor: ShuttleActorIdentity?
     ) throws {
+        var payload: [String: String] = [
+            "target": target,
+            "ref": ref,
+            "result": result,
+        ]
+        if !warnings.isEmpty {
+            payload["warnings"] = warnings.joined(separator: ",")
+        }
         try append(
             entityType: "push",
             entityID: pushID,
             eventType: "push_executed",
-            payload: [
-                "target": target,
-                "ref": ref,
-                "result": result,
-            ],
+            payload: payload,
             actor: actor
         )
     }
