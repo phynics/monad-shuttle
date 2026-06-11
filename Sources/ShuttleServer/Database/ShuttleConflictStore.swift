@@ -83,6 +83,19 @@ struct ShuttleConflictStore {
         }
     }
 
+    func fetchAllConflicts() throws -> [ShuttleStoredConflict] {
+        try dbQueue.read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                SELECT id, kind, state, blocking, source_shard_id, resolution_shard_id, details_json, created_at, updated_at
+                FROM conflicts
+                ORDER BY created_at ASC, id ASC
+                """
+            ).map(decodeConflict(row:))
+        }
+    }
+
     func fetchConflict(id: String) throws -> ShuttleStoredConflict? {
         try dbQueue.read { db in
             guard let row = try Row.fetchOne(

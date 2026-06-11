@@ -140,3 +140,73 @@ struct ShuttleCommandLogPageResponse: ResponseCodable, Equatable, Sendable {
     let items: [ShuttleCommandLogChunkResponse]
     let nextCursor: Int64?
 }
+
+struct ShuttleResolveConflictRequest: Decodable, Sendable {
+    let resolutionShardID: String?
+}
+
+struct ShuttlePushRequest: Decodable, Sendable {
+    let targetName: String
+    let ref: ShuttlePushRefRequest
+}
+
+struct ShuttlePushRefRequest: Decodable, Sendable {
+    let kind: String
+    let shardID: String?
+}
+
+struct ShuttleConflictResponse: ResponseCodable, Equatable, Sendable {
+    let id: String
+    let kind: String
+    let state: String
+    let blocking: Bool
+    let sourceShardID: String?
+    let resolutionShardID: String?
+    let details: [String: String]
+    let createdAt: Date
+    let updatedAt: Date
+
+    init(conflict: ShuttleStoredConflict) {
+        self.id = conflict.id
+        self.kind = conflict.kind
+        self.state = conflict.state
+        self.blocking = conflict.blocking
+        self.sourceShardID = conflict.sourceShardID
+        self.resolutionShardID = conflict.resolutionShardID
+        self.details = conflict.details
+        self.createdAt = conflict.createdAt
+        self.updatedAt = conflict.updatedAt
+    }
+}
+
+struct ShuttleUpstreamRefreshResponse: ResponseCodable, Equatable, Sendable {
+    let outcome: String
+    let upstreamCommit: String
+    let shuttleMainCommit: String?
+    let conflictID: String?
+
+    init(result: ShuttleUpstreamRefreshResult) {
+        self.outcome = result.outcome.rawValue
+        self.upstreamCommit = result.upstreamCommit
+        self.shuttleMainCommit = result.shuttleMainCommit
+        self.conflictID = result.conflictID
+    }
+}
+
+struct ShuttlePushResponse: ResponseCodable, Equatable, Sendable {
+    let pushID: String
+    let targetName: String
+    let localRef: String
+    let remoteRef: String
+    let warnings: [String]
+    let result: String
+
+    init(result: ShuttlePushResult) {
+        self.pushID = result.pushID
+        self.targetName = result.targetName
+        self.localRef = result.localRef
+        self.remoteRef = result.remoteRef
+        self.warnings = result.warnings
+        self.result = result.result
+    }
+}
