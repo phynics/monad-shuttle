@@ -210,3 +210,27 @@ struct ShuttlePushResponse: ResponseCodable, Equatable, Sendable {
         self.result = result.result
     }
 }
+
+struct ShuttleCompletionReportResponse: ResponseCodable, Equatable, Sendable {
+    struct Check: Codable, Equatable, Sendable {
+        let name: String
+        let status: String
+        let kind: String
+    }
+
+    let shardID: String
+    let summary: String
+    let filesChanged: [String]
+    let checks: [Check]
+    let risks: [String]
+    let createdAt: Date
+
+    init(report: ShuttleCompletionReport) {
+        self.shardID = report.shardID
+        self.summary = report.summary
+        self.filesChanged = report.filesChanged
+        self.checks = report.checks.map { .init(name: $0.name, status: $0.status, kind: $0.kind) }
+        self.risks = report.risks
+        self.createdAt = report.createdAt
+    }
+}

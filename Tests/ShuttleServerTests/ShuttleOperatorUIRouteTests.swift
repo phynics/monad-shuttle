@@ -32,6 +32,12 @@ final class ShuttleOperatorUIRouteTests: XCTestCase {
                 XCTAssertEqual(response.headers[.contentType], "application/javascript; charset=utf-8")
                 XCTAssertTrue(String(buffer: response.body).contains("/api/status"))
             }
+
+            try await client.execute(uri: "/shards/example-shard", method: .get) { response in
+                XCTAssertEqual(response.status, .ok)
+                XCTAssertEqual(response.headers[.contentType], "text/html; charset=utf-8")
+                XCTAssertTrue(String(buffer: response.body).contains("Shuttle"))
+            }
         }
     }
 }

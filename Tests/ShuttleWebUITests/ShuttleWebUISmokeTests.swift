@@ -16,4 +16,13 @@ final class ShuttleWebUISmokeTests: XCTestCase {
         XCTAssertTrue(ShuttleWebUIAssets.javascript.contains("/api/events?limit=8"))
         XCTAssertTrue(ShuttleWebUIAssets.css.contains(".queue-grid"))
     }
+
+    func testShardDetailAssetsArePresent() {
+        XCTAssertTrue(ShuttleWebUIAssets.javascript.contains("routeShardID"))
+        XCTAssertTrue(ShuttleWebUIAssets.javascript.contains("/completion-report"))
+        XCTAssertTrue(ShuttleWebUIAssets.javascript.contains("/request-finish"))
+        XCTAssertTrue(ShuttleWebUIAssets.javascript.contains("/answer"))
+        XCTAssertTrue(ShuttleWebUIAssets.javascript.contains("/abandon"))
+        XCTAssertTrue(ShuttleWebUIAssets.css.contains(".detail-layout"))
+    }
 }

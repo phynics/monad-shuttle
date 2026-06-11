@@ -348,6 +348,70 @@ public enum ShuttleWebUIAssets {
       color: var(--danger);
     }
 
+    .detail-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 360px;
+      gap: 18px;
+      align-items: start;
+    }
+
+    .detail-panel {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 14px;
+      box-shadow: var(--shadow);
+    }
+
+    .detail-panel + .detail-panel,
+    .detail-stack {
+      margin-top: 12px;
+    }
+
+    .detail-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .form-stack {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    textarea,
+    input,
+    select {
+      width: 100%;
+      min-height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px;
+      color: var(--ink);
+      background: #ffffff;
+      font: inherit;
+    }
+
+    textarea {
+      min-height: 86px;
+      resize: vertical;
+    }
+
+    pre {
+      overflow: auto;
+      max-height: 260px;
+      margin: 8px 0 0;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #f3f5f7;
+      padding: 10px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
     a {
       color: var(--info);
       text-decoration: none;
@@ -360,7 +424,8 @@ public enum ShuttleWebUIAssets {
     @media (max-width: 900px) {
       .status-band,
       .layout,
-      .queue-grid {
+      .queue-grid,
+      .detail-layout {
         grid-template-columns: 1fr;
       }
 
@@ -385,6 +450,10 @@ public enum ShuttleWebUIAssets {
       shards: [],
       conflicts: [],
       events: [],
+      shard: null,
+      shardEvents: [],
+      shardLogs: [],
+      completionReport: null,
       error: null
     };
 
@@ -396,9 +465,36 @@ public enum ShuttleWebUIAssets {
     ];
 
     const byId = (id) => document.getElementById(id);
+    const routeShardID = (() => {
+      const match = window.location.pathname.match(new RegExp("^/shards/([^/]+)$"));
+      return match ? decodeURIComponent(match[1]) : null;
+    })();
 
     async function getJSON(path) {
       const response = await fetch(path, { headers: { "Accept": "application/json" } });
+      if (!response.ok) {
+        throw new Error(`${path} returned ${response.status}`);
+      }
+      return response.json();
+    }
+
+    async function postJSON(path, body) {
+      const response = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Accept": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body)
+      });
+      if (!response.ok) {
+        throw new Error(`${path} returned ${response.status}`);
+      }
+      return response.json();
+    }
+
+    async function optionalJSON(path) {
+      const response = await fetch(path, { headers: { "Accept": "application/json" } });
+      if (response.status === 404) {
+        return null;
+      }
       if (!response.ok) {
         throw new Error(`${path} returned ${response.status}`);
       }
@@ -488,6 +584,141 @@ public enum ShuttleWebUIAssets {
         : `<div class="empty">No events yet</div>`;
     }
 
+    function renderCompletionReport() {
+      const report = state.completionReport;
+      if (!report) {
+        return `<div class="empty">No completion report</div>`;
+      }
+      return `
+        <div class="detail-panel">
+          <div class="section-heading"><h2>Completion Report</h2><span>${new Date(report.createdAt).toLocaleString()}</span></div>
+          <p>${escapeHTML(report.summary)}</p>
+          <div class="detail-stack">
+            <h3>Files</h3>
+            ${report.filesChanged.length ? `<pre>${escapeHTML(report.filesChanged.join("\\n"))}</pre>` : `<div class="empty">No files listed</div>`}
+          </div>
+          <div class="detail-stack">
+            <h3>Checks</h3>
+            ${report.checks.length ? `<pre>${escapeHTML(report.checks.map((check) => `${check.kind}: ${check.name} - ${check.status}`).join("\\n"))}</pre>` : `<div class="empty">No checks listed</div>`}
+          </div>
+          <div class="detail-stack">
+            <h3>Risks</h3>
+            ${report.risks.length ? `<pre>${escapeHTML(report.risks.join("\\n"))}</pre>` : `<div class="empty">No risks listed</div>`}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderShardActions() {
+      const shard = state.shard;
+      if (!shard) {
+        return "";
+      }
+      if (shard.state === "needs_input") {
+        return `
+          <form id="answer-form" class="form-stack">
+            <textarea id="answer-text" name="answer" placeholder="Answer"></textarea>
+            <button class="action-button" type="submit">Answer</button>
+          </form>
+        `;
+      }
+      if (shard.state === "running") {
+        return `
+          <div class="detail-actions">
+            <button id="request-finish-button" class="action-button" type="button">Request Finish</button>
+            <button id="abandon-button" class="action-button" type="button">Abandon</button>
+          </div>
+        `;
+      }
+      return `<div class="empty">No actions available for ${escapeHTML(shard.state)}</div>`;
+    }
+
+    function renderShardDetail() {
+      const root = document.querySelector(".shell");
+      const shard = state.shard;
+      if (!shard) {
+        root.innerHTML = `<div class="error">${state.error ? escapeHTML(state.error.message) : "Shard not found"}</div>`;
+        return;
+      }
+
+      root.innerHTML = `
+        <header class="topbar">
+          <div>
+            <h1>${escapeHTML(shard.title)}</h1>
+            <p><a href="/">Queue</a> / ${escapeHTML(shard.id)}</p>
+          </div>
+          <button id="refresh-button" class="icon-button" title="Refresh" aria-label="Refresh">Refresh</button>
+        </header>
+        <section class="detail-layout">
+          <div>
+            <section class="detail-panel">
+              <div class="item-header">
+                <h2>Shard</h2>
+                ${renderPill(shard.state)}
+              </div>
+              <div class="item-row"><span>Branch</span><span>${escapeHTML(shard.branchName || "not created")}</span></div>
+              <div class="item-row"><span>Worktree</span><span>${escapeHTML(shard.worktreePath || "not created")}</span></div>
+              <div class="item-row"><span>Container</span><span>${escapeHTML(shard.containerStatus || "unknown")}</span></div>
+              <pre>${escapeHTML(shard.spec)}</pre>
+              ${renderShardActions()}
+            </section>
+            ${renderCompletionReport()}
+          </div>
+          <aside>
+            <section class="detail-panel">
+              <div class="section-heading"><h2>Events</h2></div>
+              <div class="stack">
+                ${state.shardEvents.length ? state.shardEvents.map((event) => `
+                  <article class="item">
+                    <div class="item-header"><h3>${escapeHTML(event.eventType)}</h3>${renderPill(event.entityType)}</div>
+                    <div class="item-row"><span>${new Date(event.timestamp).toLocaleTimeString()}</span></div>
+                  </article>
+                `).join("") : `<div class="empty">No shard events</div>`}
+              </div>
+            </section>
+            <section class="detail-panel">
+              <div class="section-heading"><h2>Logs</h2></div>
+              <div class="stack">
+                ${state.shardLogs.length ? state.shardLogs.map((log) => `
+                  <article class="item">
+                    <div class="item-header"><h3>${escapeHTML(log.command.join(" "))}</h3>${renderPill(String(log.exitCode))}</div>
+                    <pre>${escapeHTML([log.stdout, log.stderr].filter(Boolean).join("\\n"))}</pre>
+                  </article>
+                `).join("") : `<div class="empty">No logs indexed</div>`}
+              </div>
+            </section>
+          </aside>
+        </section>
+      `;
+
+      byId("refresh-button").addEventListener("click", loadDetail);
+      const answerForm = byId("answer-form");
+      if (answerForm) {
+        answerForm.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          await postJSON(`/api/shards/${encodeURIComponent(shard.id)}/answer`, { answer: byId("answer-text").value });
+          await loadDetail();
+        });
+      }
+      const requestFinishButton = byId("request-finish-button");
+      if (requestFinishButton) {
+        requestFinishButton.addEventListener("click", async () => {
+          await postJSON(`/api/shards/${encodeURIComponent(shard.id)}/request-finish`);
+          await loadDetail();
+        });
+      }
+      const abandonButton = byId("abandon-button");
+      if (abandonButton) {
+        abandonButton.addEventListener("click", async () => {
+          const reason = window.prompt("Reason");
+          if (reason) {
+            await postJSON(`/api/shards/${encodeURIComponent(shard.id)}/abandon`, { reason });
+            await loadDetail();
+          }
+        });
+      }
+    }
+
     function renderStatus() {
       const repository = state.status?.repository;
       byId("server-state").innerHTML = renderPill(state.status?.serverState || "unknown");
@@ -529,8 +760,33 @@ public enum ShuttleWebUIAssets {
       render();
     }
 
-    byId("refresh-button").addEventListener("click", load);
-    load();
-    setInterval(load, 10000);
+    async function loadDetail() {
+      try {
+        state.error = null;
+        const encodedID = encodeURIComponent(routeShardID);
+        const [shard, events, logs, report] = await Promise.all([
+          getJSON(`/api/shards/${encodedID}`),
+          getJSON(`/api/shards/${encodedID}/events?limit=20`),
+          getJSON(`/api/shards/${encodedID}/logs?limit=20`),
+          optionalJSON(`/api/shards/${encodedID}/completion-report`)
+        ]);
+        state.shard = shard;
+        state.shardEvents = events.items || [];
+        state.shardLogs = logs.items || [];
+        state.completionReport = report;
+      } catch (error) {
+        state.error = error;
+      }
+      renderShardDetail();
+    }
+
+    if (routeShardID) {
+      loadDetail();
+      setInterval(loadDetail, 10000);
+    } else {
+      byId("refresh-button").addEventListener("click", load);
+      load();
+      setInterval(load, 10000);
+    }
     """
 }

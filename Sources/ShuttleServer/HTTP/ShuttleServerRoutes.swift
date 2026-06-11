@@ -244,6 +244,28 @@ public enum ShuttleServerRoutes {
             }
         }
 
+        router.get("/api/shards/{id}/completion-report") { _, context in
+            guard let databaseQueue else {
+                throw HTTPError(.serviceUnavailable)
+            }
+            guard let shardID = context.parameters.get("id", as: String.self) else {
+                throw HTTPError(.badRequest)
+            }
+
+            do {
+                let shardStore = ShuttleShardStore(dbQueue: databaseQueue)
+                guard try shardStore.fetchShard(id: shardID) != nil else {
+                    throw HTTPError(.notFound)
+                }
+                guard let report = try ShuttleCompletionReportStore(dbQueue: databaseQueue).fetch(shardID: shardID) else {
+                    throw HTTPError(.notFound)
+                }
+                return ShuttleCompletionReportResponse(report: report)
+            } catch {
+                throw mapShardAPIError(error)
+            }
+        }
+
         router.get("/api/events") { request, _ in
             guard let databaseQueue else {
                 throw HTTPError(.serviceUnavailable)
@@ -371,6 +393,10 @@ public enum ShuttleServerRoutes {
 
 private func registerWebUI(on router: Router<BasicRequestContext>) {
     router.get("/") { _, _ in
+        response(for: .html)
+    }
+
+    router.get("/shards/{id}") { _, _ in
         response(for: .html)
     }
 

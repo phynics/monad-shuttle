@@ -81,6 +81,32 @@ final class ShuttleShardAPITests: XCTestCase {
         }
     }
 
+    func testGetCompletionReportReturnsReportForShard() async throws {
+        let fixture = try makeFixture()
+        try fixture.seedShard(id: "shard-report", title: "Report", spec: "Report spec", state: .integrating)
+        try ShuttleCompletionReportStore(dbQueue: try XCTUnwrap(fixture.environment.databaseQueue)).save(
+            ShuttleCompletionReport(
+                shardID: "shard-report",
+                summary: "Implemented report",
+                filesChanged: ["Sources/File.swift"],
+                checks: [.init(name: "swift test", status: "passed", kind: "validation_command")],
+                risks: [],
+                createdAt: Date(timeIntervalSince1970: 1_800_000_000)
+            )
+        )
+        let app = Application(router: ShuttleServerApp.makeRouter(environment: fixture.environment))
+
+        try await app.test(.router) { client in
+            try await client.execute(uri: "/api/shards/shard-report/completion-report", method: .get) { response in
+                XCTAssertEqual(response.status, .ok)
+                let payload = try makeShardAPIDecoder().decode(ShuttleCompletionReportResponse.self, from: response.body)
+                XCTAssertEqual(payload.summary, "Implemented report")
+                XCTAssertEqual(payload.filesChanged, ["Sources/File.swift"])
+                XCTAssertEqual(payload.checks[0].name, "swift test")
+            }
+        }
+    }
+
     func testRequestFinishAnswerAndAbandonEndpointsRespectTransitions() async throws {
         let fixture = try makeFixture()
         try fixture.seedShard(id: "shard-running", title: "Running", spec: "Run", state: .running)
