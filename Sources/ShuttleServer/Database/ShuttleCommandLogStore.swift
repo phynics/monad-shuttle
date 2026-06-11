@@ -82,7 +82,7 @@ struct ShuttleCommandLogStore {
                 sql: """
                 SELECT id, file_path
                 FROM log_indexes
-                WHERE created_at < ?
+                WHERE stream = 'command' AND created_at < ?
                 ORDER BY id ASC
                 """,
                 arguments: [cutoff]

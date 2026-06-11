@@ -94,6 +94,62 @@ struct ShuttleAgentTranscriptStore {
         }
     }
 
+    @discardableResult
+    func cleanupExpiredEntries(now: Date = Date()) throws -> ShuttleCommandLogStore.CleanupResult {
+        let cutoff = now.addingTimeInterval(Double(-retentionDays * 24 * 60 * 60))
+
+        let expiredRows: [(id: Int64, filePath: String)] = try dbQueue.read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                SELECT id, file_path
+                FROM log_indexes
+                WHERE stream = 'agent' AND created_at < ?
+                ORDER BY id ASC
+                """,
+                arguments: [cutoff]
+            ).map { row in
+                (id: row["id"], filePath: row["file_path"])
+            }
+        }
+
+        guard !expiredRows.isEmpty else {
+            return .init(deletedIndexCount: 0, deletedFileCount: 0)
+        }
+
+        let expiredIDs = expiredRows.map(\.id)
+        let candidatePaths = Set(expiredRows.map(\.filePath))
+
+        try dbQueue.write { db in
+            for id in expiredIDs {
+                try db.execute(
+                    sql: "DELETE FROM log_indexes WHERE id = ?",
+                    arguments: [id]
+                )
+            }
+        }
+
+        var deletedFiles = 0
+        for path in candidatePaths {
+            let remainingCount: Int = try dbQueue.read { db in
+                try Int.fetchOne(
+                    db,
+                    sql: "SELECT COUNT(*) FROM log_indexes WHERE file_path = ?",
+                    arguments: [path]
+                ) ?? 0
+            }
+            if remainingCount == 0, FileManager.default.fileExists(atPath: path) {
+                try FileManager.default.removeItem(atPath: path)
+                deletedFiles += 1
+            }
+        }
+
+        return .init(
+            deletedIndexCount: expiredIDs.count,
+            deletedFileCount: deletedFiles
+        )
+    }
+
     private func shardDirectory(shardID: String) -> URL {
         URL(fileURLWithPath: logsRootPath, isDirectory: true)
             .appendingPathComponent(shardID, isDirectory: true)

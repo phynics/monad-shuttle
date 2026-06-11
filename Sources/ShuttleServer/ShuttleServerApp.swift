@@ -91,6 +91,12 @@ public enum ShuttleServerApp {
                     dockerAccessController: dockerAccessController,
                     statusStore: statusStore
                 )
+                try await cleanupRetainedState(
+                    loadedConfig: loadedConfig,
+                    managedRepository: managedRepository,
+                    databaseQueue: openedDatabase,
+                    statusStore: statusStore
+                )
             } catch let startupError as ShuttleStartupError {
                 throw startupError
             } catch {
@@ -267,6 +273,51 @@ public enum ShuttleServerApp {
             await statusStore.setServerState(.fatal)
             await statusStore.setSubsystem(
                 "repo_refresh",
+                status: .init(status: .failed, detail: detail)
+            )
+            throw ShuttleStartupError.gitOperationFailed(detail)
+        }
+    }
+
+    private static func cleanupRetainedState(
+        loadedConfig: ShuttleConfig?,
+        managedRepository: ShuttleRepositoryBootstrapResult?,
+        databaseQueue: DatabaseQueue,
+        statusStore: ShuttleServerStatusStore
+    ) async throws {
+        guard let loadedConfig, let managedRepository else {
+            return
+        }
+
+        let cleanupService = ShuttleRetentionCleanupService(
+            config: loadedConfig,
+            shardStore: ShuttleShardStore(dbQueue: databaseQueue),
+            auditEventStore: ShuttleAuditEventStore(dbQueue: databaseQueue),
+            worktreeManager: ShuttleWorktreeManager(
+                bareRepositoryPath: managedRepository.bareRepositoryPath,
+                worktreesRootPath: loadedConfig.paths.worktreesPath
+            ),
+            commandLogStore: ShuttleCommandLogStore(
+                dbQueue: databaseQueue,
+                logsRootPath: loadedConfig.paths.logsPath,
+                retentionDays: loadedConfig.retention.rawLogsDays,
+                maxBytesPerFile: loadedConfig.retention.rawLogsMaxBytes
+            ),
+            agentTranscriptStore: ShuttleAgentTranscriptStore(
+                dbQueue: databaseQueue,
+                logsRootPath: loadedConfig.paths.logsPath,
+                retentionDays: loadedConfig.retention.rawLogsDays,
+                maxBytesPerFile: loadedConfig.retention.rawLogsMaxBytes
+            )
+        )
+
+        do {
+            _ = try cleanupService.cleanup()
+        } catch {
+            let detail = "Retention cleanup failed: \(error)"
+            await statusStore.setServerState(.fatal)
+            await statusStore.setSubsystem(
+                "volumes",
                 status: .init(status: .failed, detail: detail)
             )
             throw ShuttleStartupError.gitOperationFailed(detail)

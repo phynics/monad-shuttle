@@ -189,6 +189,30 @@ struct ShuttleShardStore {
         }
     }
 
+    func fetchExpiredRetainedShards(now: Date = Date()) throws -> [ShuttleStoredShardDetail] {
+        try dbQueue.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT id, title, spec, state, base_commit, retained_until, created_at, updated_at
+                FROM shards
+                WHERE state = ? AND retained_until IS NOT NULL AND retained_until <= ?
+                ORDER BY retained_until ASC, id ASC
+                """,
+                arguments: [
+                    ShuttleShardState.done.rawValue,
+                    now,
+                ]
+            )
+
+            return try rows.compactMap { row in
+                let shard = try decodeShard(row: row)
+                let runtimeMetadata = try fetchRuntimeMetadata(shardID: shard.id, db: db)
+                return ShuttleStoredShardDetail(shard: shard, runtimeMetadata: runtimeMetadata)
+            }
+        }
+    }
+
     func fetchShardDetail(id: String) throws -> ShuttleStoredShardDetail? {
         try dbQueue.read { db in
             guard let shard = try fetchShard(id: id, db: db) else {

@@ -194,6 +194,23 @@ struct ShuttleAuditEventStore {
         )
     }
 
+    func recordShardRetentionCleaned(
+        shardID: String,
+        worktreeRemoved: Bool,
+        branchRemoved: Bool
+    ) throws {
+        try append(
+            entityType: "shard",
+            entityID: shardID,
+            eventType: "shard_retention_cleaned",
+            payload: [
+                "worktree_removed": worktreeRemoved ? "true" : "false",
+                "branch_removed": branchRemoved ? "true" : "false",
+            ],
+            actor: nil
+        )
+    }
+
     func fetchAll() throws -> [ShuttleAuditEvent] {
         try dbQueue.read { db in
             try Row.fetchAll(
