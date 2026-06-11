@@ -25,6 +25,7 @@ let package = Package(
                 .product(name: "PKShared", package: "PositronicKit"),
                 .product(name: "GRDB", package: "GRDB.swift"),
                 .product(name: "Yams", package: "Yams"),
+                "ShuttleWebUI",
             ],
             path: "Sources/ShuttleServer"
         ),

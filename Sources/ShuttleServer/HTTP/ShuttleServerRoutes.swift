@@ -2,6 +2,7 @@ import Foundation
 import GRDB
 import Hummingbird
 import HTTPTypes
+import ShuttleWebUI
 
 public enum ShuttleServerRoutes {
     static func register(
@@ -11,6 +12,8 @@ public enum ShuttleServerRoutes {
         repositoryStateStore: ShuttleRepositoryStateStore? = nil,
         databaseQueue: DatabaseQueue? = nil
     ) {
+        registerWebUI(on: router)
+
         router.get("/api/status") { _, _ in
             let repository: ShuttleStatusResponse.Repository?
             if let repositoryStateStore,
@@ -364,6 +367,28 @@ public enum ShuttleServerRoutes {
             }
         }
     }
+}
+
+private func registerWebUI(on router: Router<BasicRequestContext>) {
+    router.get("/") { _, _ in
+        response(for: .html)
+    }
+
+    router.get("/assets/shuttle.css") { _, _ in
+        response(for: .css)
+    }
+
+    router.get("/assets/shuttle.js") { _, _ in
+        response(for: .javascript)
+    }
+}
+
+private func response(for asset: ShuttleWebUIAsset) -> Response {
+    Response(
+        status: .ok,
+        headers: [.contentType: asset.contentType],
+        body: .init(byteBuffer: ByteBuffer(string: asset.body))
+    )
 }
 
 private struct ShuttlePaginationRequest {
