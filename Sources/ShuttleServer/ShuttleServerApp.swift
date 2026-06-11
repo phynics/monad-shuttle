@@ -83,6 +83,14 @@ public enum ShuttleServerApp {
                     repositoryStateStore: repositoryStateStore,
                     managedRepository: managedRepository
                 )
+                try await reconcileStartupState(
+                    loadedConfig: loadedConfig,
+                    managedRepository: managedRepository,
+                    databaseQueue: openedDatabase,
+                    repositoryStateStore: repositoryStateStore,
+                    dockerAccessController: dockerAccessController,
+                    statusStore: statusStore
+                )
             } catch let startupError as ShuttleStartupError {
                 throw startupError
             } catch {
@@ -227,6 +235,41 @@ public enum ShuttleServerApp {
                 ).stdout,
                 blockedConflictID: nil
             )
+        }
+    }
+
+    private static func reconcileStartupState(
+        loadedConfig: ShuttleConfig?,
+        managedRepository: ShuttleRepositoryBootstrapResult?,
+        databaseQueue: DatabaseQueue,
+        repositoryStateStore: ShuttleRepositoryStateStore?,
+        dockerAccessController: ShuttleDockerAccessController,
+        statusStore: ShuttleServerStatusStore
+    ) async throws {
+        guard let loadedConfig, let managedRepository, let repositoryStateStore else {
+            return
+        }
+
+        let reconciliationService = ShuttleStartupReconciliationService(
+            config: loadedConfig,
+            managedRepository: managedRepository,
+            shardStore: ShuttleShardStore(dbQueue: databaseQueue),
+            repositoryStateStore: repositoryStateStore,
+            conflictStore: ShuttleConflictStore(dbQueue: databaseQueue),
+            auditEventStore: ShuttleAuditEventStore(dbQueue: databaseQueue),
+            dockerAccessController: dockerAccessController
+        )
+
+        do {
+            try await reconciliationService.reconcile()
+        } catch {
+            let detail = "Startup reconciliation failed: \(error)"
+            await statusStore.setServerState(.fatal)
+            await statusStore.setSubsystem(
+                "repo_refresh",
+                status: .init(status: .failed, detail: detail)
+            )
+            throw ShuttleStartupError.gitOperationFailed(detail)
         }
     }
 

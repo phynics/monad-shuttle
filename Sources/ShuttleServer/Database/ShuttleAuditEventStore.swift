@@ -175,6 +175,25 @@ struct ShuttleAuditEventStore {
         )
     }
 
+    func recordShardReconciled(
+        shardID: String,
+        fromState: ShuttleShardState,
+        toState: ShuttleShardState,
+        outcome: String
+    ) throws {
+        try append(
+            entityType: "shard",
+            entityID: shardID,
+            eventType: "shard_reconciled",
+            payload: [
+                "from_state": fromState.rawValue,
+                "to_state": toState.rawValue,
+                "outcome": outcome,
+            ],
+            actor: nil
+        )
+    }
+
     func fetchAll() throws -> [ShuttleAuditEvent] {
         try dbQueue.read { db in
             try Row.fetchAll(
@@ -224,6 +243,35 @@ struct ShuttleAuditEventStore {
                 }
                 return payload["instruction"]
             }
+        }
+    }
+
+    func hasOutstandingInputRequest(shardID: String) throws -> Bool {
+        try dbQueue.read { db in
+            let lastRequestedID = try Int64.fetchOne(
+                db,
+                sql: """
+                SELECT MAX(id)
+                FROM audit_events
+                WHERE entity_type = 'shard' AND entity_id = ? AND event_type = 'shard_input_requested'
+                """,
+                arguments: [shardID]
+            )
+            let lastAnsweredID = try Int64.fetchOne(
+                db,
+                sql: """
+                SELECT MAX(id)
+                FROM audit_events
+                WHERE entity_type = 'shard' AND entity_id = ? AND event_type = 'shard_input_answered'
+                """,
+                arguments: [shardID]
+            )
+
+            guard let lastRequestedID else {
+                return false
+            }
+
+            return (lastAnsweredID ?? 0) < lastRequestedID
         }
     }
 
