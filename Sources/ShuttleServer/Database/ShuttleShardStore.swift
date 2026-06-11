@@ -21,6 +21,11 @@ struct ShuttleStoredShardRuntimeMetadata: Equatable, Sendable {
     let updatedAt: Date
 }
 
+struct ShuttleStoredShardDetail: Equatable, Sendable {
+    let shard: ShuttleStoredShard
+    let runtimeMetadata: ShuttleStoredShardRuntimeMetadata?
+}
+
 enum ShuttleShardStoreError: Error, Equatable, Sendable {
     case duplicateShard(String)
     case shardNotFound(String)
@@ -155,6 +160,45 @@ struct ShuttleShardStore {
         }
     }
 
+    func fetchShards(states: [ShuttleShardState]? = nil) throws -> [ShuttleStoredShard] {
+        try dbQueue.read { db in
+            let rows: [Row]
+            if let states, !states.isEmpty {
+                let placeholders = Array(repeating: "?", count: states.count).joined(separator: ", ")
+                rows = try Row.fetchAll(
+                    db,
+                    sql: """
+                    SELECT id, title, spec, state, base_commit, retained_until, created_at, updated_at
+                    FROM shards
+                    WHERE state IN (\(placeholders))
+                    ORDER BY created_at DESC, id DESC
+                    """,
+                    arguments: StatementArguments(states.map(\.rawValue))
+                )
+            } else {
+                rows = try Row.fetchAll(
+                    db,
+                    sql: """
+                    SELECT id, title, spec, state, base_commit, retained_until, created_at, updated_at
+                    FROM shards
+                    ORDER BY created_at DESC, id DESC
+                    """
+                )
+            }
+            return try rows.map(decodeShard(row:))
+        }
+    }
+
+    func fetchShardDetail(id: String) throws -> ShuttleStoredShardDetail? {
+        try dbQueue.read { db in
+            guard let shard = try fetchShard(id: id, db: db) else {
+                return nil
+            }
+            let runtimeMetadata = try fetchRuntimeMetadata(shardID: id, db: db)
+            return ShuttleStoredShardDetail(shard: shard, runtimeMetadata: runtimeMetadata)
+        }
+    }
+
     func updateState(
         shardID: String,
         to nextState: ShuttleShardState,
@@ -228,6 +272,33 @@ struct ShuttleShardStore {
             return nil
         }
 
+        return try decodeShard(row: row)
+    }
+
+    private func fetchRuntimeMetadata(shardID: String, db: Database) throws -> ShuttleStoredShardRuntimeMetadata? {
+        guard let row = try Row.fetchOne(
+            db,
+            sql: """
+            SELECT shard_id, branch_name, worktree_path, container_name, container_status, updated_at
+            FROM shard_runtime_metadata
+            WHERE shard_id = ?
+            """,
+            arguments: [shardID]
+        ) else {
+            return nil
+        }
+
+        return ShuttleStoredShardRuntimeMetadata(
+            shardID: row["shard_id"],
+            branchName: row["branch_name"],
+            worktreePath: row["worktree_path"],
+            containerName: row["container_name"],
+            containerStatus: row["container_status"],
+            updatedAt: row["updated_at"]
+        )
+    }
+
+    private func decodeShard(row: Row) throws -> ShuttleStoredShard {
         guard let state = ShuttleShardState(rawValue: row["state"]) else {
             throw ShuttleShardStoreError.invalidShardState(row["state"])
         }

@@ -236,7 +236,8 @@ public enum ShuttleServerApp {
             on: router,
             statusStore: environment.statusStore,
             loadedConfig: environment.loadedConfig,
-            repositoryStateStore: environment.repositoryStateStore
+            repositoryStateStore: environment.repositoryStateStore,
+            databaseQueue: environment.databaseQueue
         )
         return router
     }
