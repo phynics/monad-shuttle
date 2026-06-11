@@ -17,6 +17,11 @@ struct ShuttleAuditEvent: Equatable, Sendable {
     let payload: [String: String]
 }
 
+struct ShuttleAuditEventPage: Equatable, Sendable {
+    let events: [ShuttleAuditEvent]
+    let nextCursor: Int64?
+}
+
 enum ShuttleAuditEventStoreError: Error, Equatable, Sendable {
     case invalidPayloadEncoding
     case invalidPayloadDecoding
@@ -222,6 +227,51 @@ struct ShuttleAuditEventStore {
         }
     }
 
+    func fetchPage(
+        entityType: String? = nil,
+        entityID: String? = nil,
+        afterID: Int64? = nil,
+        limit: Int
+    ) throws -> ShuttleAuditEventPage {
+        precondition(limit > 0, "limit must be positive")
+
+        return try dbQueue.read { db in
+            var predicates: [String] = []
+            var arguments = StatementArguments()
+
+            if let entityType {
+                predicates.append("entity_type = ?")
+                arguments += [entityType]
+            }
+            if let entityID {
+                predicates.append("entity_id = ?")
+                arguments += [entityID]
+            }
+            if let afterID {
+                predicates.append("id > ?")
+                arguments += [afterID]
+            }
+
+            let whereClause = predicates.isEmpty ? "" : "WHERE " + predicates.joined(separator: " AND ")
+            let sql = """
+                SELECT id, timestamp, actor_type, actor_id, entity_type, entity_id, event_type, payload_json
+                FROM audit_events
+                \(whereClause)
+                ORDER BY id ASC
+                LIMIT ?
+                """
+            arguments += [limit + 1]
+
+            let rows = try Row.fetchAll(db, sql: sql, arguments: arguments)
+
+            let decoded = try rows.map(decodeEvent(row:))
+            let hasMore = decoded.count > limit
+            let pageEvents = hasMore ? Array(decoded.prefix(limit)) : decoded
+            let nextCursor = hasMore ? pageEvents.last?.id : nil
+            return ShuttleAuditEventPage(events: pageEvents, nextCursor: nextCursor)
+        }
+    }
+
     private func append(
         entityType: String,
         entityID: String,
@@ -251,5 +301,24 @@ struct ShuttleAuditEventStore {
                 ]
             )
         }
+    }
+
+    private func decodeEvent(row: Row) throws -> ShuttleAuditEvent {
+        let payloadJSON: String = row["payload_json"]
+        guard let payloadData = payloadJSON.data(using: .utf8),
+              let payload = try? JSONDecoder().decode([String: String].self, from: payloadData) else {
+            throw ShuttleAuditEventStoreError.invalidPayloadDecoding
+        }
+
+        return ShuttleAuditEvent(
+            id: row["id"],
+            timestamp: row["timestamp"],
+            actorType: row["actor_type"],
+            actorID: row["actor_id"],
+            entityType: row["entity_type"],
+            entityID: row["entity_id"],
+            eventType: row["event_type"],
+            payload: payload
+        )
     }
 }

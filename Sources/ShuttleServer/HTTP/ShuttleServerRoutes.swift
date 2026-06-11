@@ -176,7 +176,96 @@ public enum ShuttleServerRoutes {
                 throw mapShardAPIError(error)
             }
         }
+
+        router.get("/api/shards/{id}/events") { request, context in
+            guard let databaseQueue else {
+                throw HTTPError(.serviceUnavailable)
+            }
+            guard let shardID = context.parameters.get("id", as: String.self) else {
+                throw HTTPError(.badRequest)
+            }
+
+            do {
+                let pagination = try parsePagination(from: request)
+                let shardStore = ShuttleShardStore(dbQueue: databaseQueue)
+                guard try shardStore.fetchShard(id: shardID) != nil else {
+                    throw HTTPError(.notFound)
+                }
+
+                let page = try ShuttleAuditEventStore(dbQueue: databaseQueue).fetchPage(
+                    entityType: "shard",
+                    entityID: shardID,
+                    afterID: pagination.cursor,
+                    limit: pagination.limit
+                )
+                return ShuttleAuditEventPageResponse(
+                    items: page.events.map(ShuttleAuditEventResponse.init),
+                    nextCursor: page.nextCursor
+                )
+            } catch {
+                throw mapShardAPIError(error)
+            }
+        }
+
+        router.get("/api/shards/{id}/logs") { request, context in
+            guard let databaseQueue, let loadedConfig else {
+                throw HTTPError(.serviceUnavailable)
+            }
+            guard let shardID = context.parameters.get("id", as: String.self) else {
+                throw HTTPError(.badRequest)
+            }
+
+            do {
+                let pagination = try parsePagination(from: request)
+                let shardStore = ShuttleShardStore(dbQueue: databaseQueue)
+                guard try shardStore.fetchShard(id: shardID) != nil else {
+                    throw HTTPError(.notFound)
+                }
+
+                let page = try ShuttleCommandLogStore(
+                    dbQueue: databaseQueue,
+                    logsRootPath: loadedConfig.paths.logsPath,
+                    retentionDays: loadedConfig.retention.rawLogsDays,
+                    maxBytesPerFile: loadedConfig.retention.rawLogsMaxBytes
+                ).fetchPage(
+                    shardID: shardID,
+                    afterID: pagination.cursor,
+                    limit: pagination.limit
+                )
+                return ShuttleCommandLogPageResponse(
+                    items: page.entries.map(ShuttleCommandLogChunkResponse.init),
+                    nextCursor: page.nextCursor
+                )
+            } catch {
+                throw mapShardAPIError(error)
+            }
+        }
+
+        router.get("/api/events") { request, _ in
+            guard let databaseQueue else {
+                throw HTTPError(.serviceUnavailable)
+            }
+
+            do {
+                let pagination = try parsePagination(from: request)
+                let page = try ShuttleAuditEventStore(dbQueue: databaseQueue).fetchPage(
+                    afterID: pagination.cursor,
+                    limit: pagination.limit
+                )
+                return ShuttleAuditEventPageResponse(
+                    items: page.events.map(ShuttleAuditEventResponse.init),
+                    nextCursor: page.nextCursor
+                )
+            } catch {
+                throw mapShardAPIError(error)
+            }
+        }
     }
+}
+
+private struct ShuttlePaginationRequest {
+    let cursor: Int64?
+    let limit: Int
 }
 
 private func parseStateFilter(_ rawValue: Substring?) throws -> [ShuttleShardState]? {
@@ -197,6 +286,32 @@ private func parseStateFilter(_ rawValue: Substring?) throws -> [ShuttleShardSta
         states.append(state)
     }
     return states
+}
+
+private func parsePagination(from request: Request, defaultLimit: Int = 50, maxLimit: Int = 200) throws -> ShuttlePaginationRequest {
+    let query = request.uri.queryParameters
+
+    let cursor: Int64?
+    if let rawCursor = query["cursor"] {
+        guard let parsed = Int64(String(rawCursor)), parsed >= 0 else {
+            throw HTTPError(.badRequest, message: "Invalid cursor")
+        }
+        cursor = parsed
+    } else {
+        cursor = nil
+    }
+
+    let limit: Int
+    if let rawLimit = query["limit"] {
+        guard let parsed = Int(String(rawLimit)), parsed > 0, parsed <= maxLimit else {
+            throw HTTPError(.badRequest, message: "Invalid limit")
+        }
+        limit = parsed
+    } else {
+        limit = defaultLimit
+    }
+
+    return ShuttlePaginationRequest(cursor: cursor, limit: limit)
 }
 
 private func mapShardAPIError(_ error: Error) -> Error {

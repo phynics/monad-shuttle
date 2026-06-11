@@ -1,6 +1,22 @@
 import Foundation
 import GRDB
 
+struct ShuttleCommandLogIndexEntry: Equatable, Sendable {
+    let id: Int64
+    let shardID: String
+    let stream: String
+    let filePath: String
+    let offsetStart: Int64
+    let offsetEnd: Int64
+    let createdAt: Date
+    let entry: ShuttleCommandLogEntry
+}
+
+struct ShuttleCommandLogPage: Equatable, Sendable {
+    let entries: [ShuttleCommandLogIndexEntry]
+    let nextCursor: Int64?
+}
+
 struct ShuttleCommandLogStore {
     let dbQueue: DatabaseQueue
     let logsRootPath: String
@@ -139,6 +155,36 @@ struct ShuttleCommandLogStore {
         }
     }
 
+    func fetchPage(
+        shardID: String,
+        afterID: Int64? = nil,
+        limit: Int
+    ) throws -> ShuttleCommandLogPage {
+        precondition(limit > 0, "limit must be positive")
+
+        return try dbQueue.read { db in
+            var sql = """
+                SELECT id, shard_id, stream, file_path, offset_start, offset_end, created_at
+                FROM log_indexes
+                WHERE shard_id = ? AND stream = 'command'
+                """
+            var arguments = StatementArguments([shardID])
+            if let afterID {
+                sql += " AND id > ?"
+                arguments += [afterID]
+            }
+            sql += " ORDER BY id ASC LIMIT ?"
+            arguments += [limit + 1]
+
+            let rows = try Row.fetchAll(db, sql: sql, arguments: arguments)
+            let decoded = try rows.map(decodeIndexEntry(row:))
+            let hasMore = decoded.count > limit
+            let pageEntries = hasMore ? Array(decoded.prefix(limit)) : decoded
+            let nextCursor = hasMore ? pageEntries.last?.id : nil
+            return ShuttleCommandLogPage(entries: pageEntries, nextCursor: nextCursor)
+        }
+    }
+
     private func shardDirectory(shardID: String) -> URL {
         URL(fileURLWithPath: logsRootPath, isDirectory: true)
             .appendingPathComponent(shardID, isDirectory: true)
@@ -180,5 +226,28 @@ struct ShuttleCommandLogStore {
             return nil
         }
         return Int(suffix)
+    }
+
+    private func decodeIndexEntry(row: Row) throws -> ShuttleCommandLogIndexEntry {
+        let filePath: String = row["file_path"]
+        let start: Int64 = row["offset_start"]
+        let end: Int64 = row["offset_end"]
+        let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: filePath))
+        try handle.seek(toOffset: UInt64(start))
+        let data = try handle.read(upToCount: Int(end - start)) ?? Data()
+        try handle.close()
+        let trimmed = data.last == 0x0A ? data.dropLast() : data[...]
+        let entry = try JSONDecoder().decode(ShuttleCommandLogEntry.self, from: Data(trimmed))
+
+        return ShuttleCommandLogIndexEntry(
+            id: row["id"],
+            shardID: row["shard_id"],
+            stream: row["stream"],
+            filePath: filePath,
+            offsetStart: start,
+            offsetEnd: end,
+            createdAt: row["created_at"],
+            entry: entry
+        )
     }
 }
