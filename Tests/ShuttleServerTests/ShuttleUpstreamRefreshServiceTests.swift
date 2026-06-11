@@ -70,6 +70,15 @@ final class ShuttleUpstreamRefreshServiceTests: XCTestCase {
         XCTAssertEqual(conflicts[0].kind, "upstream_refresh")
     }
 
+    func testRefreshRejectsWhenRepositoryAlreadyIntegrating() throws {
+        let fixture = try makeFixture()
+        try fixture.repositoryStateStore.upsert(config: fixture.config, integrationState: .integrating)
+
+        XCTAssertThrowsError(try fixture.refreshService.refresh()) { error in
+            XCTAssertEqual(error as? ShuttleUpstreamRefreshServiceError, .integrationLocked(.integrating))
+        }
+    }
+
     private func makeFixture() throws -> Fixture {
         let gitFixture = try ShuttleGitTestFixture.create()
         let root = gitFixture.root.appendingPathComponent("refresh", isDirectory: true)

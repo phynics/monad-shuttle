@@ -144,6 +144,10 @@ struct ShuttleShardAgentRunner {
     private func moveToRunningIfNeeded(shard: ShuttleStoredShard) throws {
         switch shard.state {
         case .queued:
+            try ShuttleConcurrencyLimitService(
+                config: config,
+                shardStore: shardStore
+            ).assertCanEnterRunningState()
             try shardStore.updateState(shardID: shard.id, to: .running)
         case .running, .needsInput, .integrating:
             break

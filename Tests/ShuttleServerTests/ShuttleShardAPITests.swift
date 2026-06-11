@@ -178,7 +178,46 @@ final class ShuttleShardAPITests: XCTestCase {
         }
     }
 
-    private func makeFixture() throws -> Fixture {
+    func testPostShardsRejectsWhenQueuedShardLimitReached() async throws {
+        let fixture = try makeFixture(maxQueuedShards: 1)
+        try fixture.seedShard(id: "shard-queued-1", title: "Queued", spec: "Queued", state: .queued)
+        let app = Application(router: ShuttleServerApp.makeRouter(environment: fixture.environment))
+
+        try await app.test(.router) { client in
+            let body = ByteBuffer(string: #"{"title":"Second queued shard","spec":"Should be rejected"}"#)
+            try await client.execute(
+                uri: "/api/shards",
+                method: .post,
+                headers: [
+                    .contentType: "application/json",
+                    HTTPField.Name("Idempotency-Key")!: "create-limit-1",
+                ],
+                body: body
+            ) { response in
+                XCTAssertEqual(response.status, .conflict)
+            }
+        }
+    }
+
+    func testAnswerRejectsWhenRunningShardLimitReached() async throws {
+        let fixture = try makeFixture(maxRunningShards: 1)
+        try fixture.seedShard(id: "shard-running-limit", title: "Running", spec: "Running", state: .running)
+        try fixture.seedShard(id: "shard-needs-input-limit", title: "Needs input", spec: "Needs input", state: .needsInput)
+        let app = Application(router: ShuttleServerApp.makeRouter(environment: fixture.environment))
+
+        try await app.test(.router) { client in
+            try await client.execute(
+                uri: "/api/shards/shard-needs-input-limit/answer",
+                method: .post,
+                headers: [.contentType: "application/json"],
+                body: ByteBuffer(string: #"{"answer":"Proceed"}"#)
+            ) { response in
+                XCTAssertEqual(response.status, .conflict)
+            }
+        }
+    }
+
+    private func makeFixture(maxQueuedShards: Int = 32, maxRunningShards: Int = 4) throws -> Fixture {
         let gitFixture = try ShuttleGitTestFixture.create()
         let root = gitFixture.root.appendingPathComponent("shard-api", isDirectory: true)
         let databaseRoot = root.appendingPathComponent("database", isDirectory: true)
@@ -213,7 +252,7 @@ final class ShuttleShardAPITests: XCTestCase {
             ),
             refresh: .init(schedule: "0 * * * *"),
             retention: .init(worktreeDays: 7, rawLogsDays: 14, rawLogsMaxBytes: 10_485_760),
-            limits: .init(maxRunningShards: 4, maxIntegratingShards: 1, maxQueuedShards: 32, maxLogBytesPerShard: 5_242_880),
+            limits: .init(maxRunningShards: maxRunningShards, maxIntegratingShards: 1, maxQueuedShards: maxQueuedShards, maxLogBytesPerShard: 5_242_880),
             paths: .init(
                 databasePath: databaseRoot.appendingPathComponent("shuttle.sqlite").path,
                 gitPath: gitRoot.path,

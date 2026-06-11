@@ -68,6 +68,16 @@ final class ShuttleSquashMergeServiceTests: XCTestCase {
         }
     }
 
+    func testIntegrationLockRejectsMergeWhileRepositoryRefreshing() throws {
+        let fixture = try makeFixture()
+        try fixture.completionReportStore.save(validReport(shardID: fixture.shard.id))
+        try fixture.repositoryStateStore.upsert(config: fixture.config, integrationState: .refreshing)
+
+        XCTAssertThrowsError(try fixture.mergeService.merge(shardID: fixture.shard.id)) { error in
+            XCTAssertEqual(error as? ShuttleSquashMergeServiceError, .integrationLocked(.refreshing))
+        }
+    }
+
     private func makeFixture() throws -> Fixture {
         let gitFixture = try ShuttleGitTestFixture.create()
         let root = gitFixture.root.appendingPathComponent("squash-merge", isDirectory: true)

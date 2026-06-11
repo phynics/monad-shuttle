@@ -7,6 +7,7 @@ enum ShuttleShardAnswerServiceError: Error, Equatable, Sendable {
 }
 
 struct ShuttleShardAnswerService {
+    let config: ShuttleConfig
     let shardStore: ShuttleShardStore
     let auditEventStore: ShuttleAuditEventStore
 
@@ -28,6 +29,10 @@ struct ShuttleShardAnswerService {
 
         let stateMachine = ShuttleStateMachine(shardStates: [shardID: shard.state])
         try await stateMachine.transitionShard(id: shardID, to: .running)
+        try ShuttleConcurrencyLimitService(
+            config: config,
+            shardStore: shardStore
+        ).assertCanEnterRunningState()
 
         try shardStore.updateState(shardID: shardID, to: .running)
         try auditEventStore.recordShardInputAnswered(

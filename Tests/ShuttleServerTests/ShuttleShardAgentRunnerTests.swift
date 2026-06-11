@@ -102,7 +102,27 @@ final class ShuttleShardAgentRunnerTests: XCTestCase {
         XCTAssertEqual(shard.state, .needsInput)
     }
 
-    private func makeFixture() async throws -> Fixture {
+    func testRunShardRejectsQueuedShardWhenRunningLimitReached() async throws {
+        let fixture = try await makeFixture(maxRunningShards: 1)
+        try fixture.shardStore.createQueuedShard(
+            id: "shard-already-running",
+            title: "Running shard",
+            spec: "Running shard",
+            baseCommit: "abc123",
+            branchName: "shuttle/shards/already-running",
+            worktreePath: fixture.worktreeURL.deletingLastPathComponent().appendingPathComponent("already-running").path
+        )
+        try fixture.shardStore.updateState(shardID: "shard-already-running", to: .running)
+
+        do {
+            _ = try await fixture.runner.runShard(shardID: fixture.shardID)
+            XCTFail("Expected running shard limit error")
+        } catch {
+            XCTAssertEqual(error as? ShuttleConcurrencyLimitError, .maxRunningShardsReached(limit: 1))
+        }
+    }
+
+    private func makeFixture(maxRunningShards: Int = 4) async throws -> Fixture {
         let gitFixture = try ShuttleGitTestFixture.create()
         let root = gitFixture.root.appendingPathComponent("agent-runner", isDirectory: true)
         let databaseRoot = root.appendingPathComponent("database", isDirectory: true)
@@ -127,7 +147,7 @@ final class ShuttleShardAgentRunnerTests: XCTestCase {
             ),
             refresh: .init(schedule: "0 * * * *"),
             retention: .init(worktreeDays: 7, rawLogsDays: 7, rawLogsMaxBytes: 2_048),
-            limits: .init(maxRunningShards: 4, maxIntegratingShards: 1, maxQueuedShards: 32, maxLogBytesPerShard: 2_048),
+            limits: .init(maxRunningShards: maxRunningShards, maxIntegratingShards: 1, maxQueuedShards: 32, maxLogBytesPerShard: 2_048),
             paths: .init(
                 databasePath: databaseRoot.appendingPathComponent("shuttle.sqlite").path,
                 gitPath: gitRoot.path,

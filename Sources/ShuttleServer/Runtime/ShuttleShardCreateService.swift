@@ -12,6 +12,7 @@ enum ShuttleShardCreateServiceError: Error, Equatable, Sendable {
 }
 
 struct ShuttleShardCreateService {
+    let config: ShuttleConfig
     let shardStore: ShuttleShardStore
     let workspaceService: ShuttleShardWorkspaceService
     let idempotencyStore: ShuttleIdempotencyStore
@@ -71,6 +72,11 @@ struct ShuttleShardCreateService {
         case .recorded:
             break
         }
+
+        try ShuttleConcurrencyLimitService(
+            config: config,
+            shardStore: shardStore
+        ).assertCanCreateQueuedShard()
 
         _ = try workspaceService.createQueuedShard(
             id: provisionalShardID,

@@ -57,6 +57,7 @@ public enum ShuttleServerRoutes {
                     )
                 )
                 let createService = ShuttleShardCreateService(
+                    config: loadedConfig,
                     shardStore: shardStore,
                     workspaceService: workspaceService,
                     idempotencyStore: ShuttleIdempotencyStore(dbQueue: databaseQueue),
@@ -132,7 +133,7 @@ public enum ShuttleServerRoutes {
         }
 
         router.post("/api/shards/{id}/answer") { request, context in
-            guard let databaseQueue else {
+            guard let databaseQueue, let loadedConfig else {
                 throw HTTPError(.serviceUnavailable)
             }
             guard let shardID = context.parameters.get("id", as: String.self) else {
@@ -141,6 +142,7 @@ public enum ShuttleServerRoutes {
             let body = try await request.decode(as: ShuttleAnswerShardRequest.self, context: context)
             let shardStore = ShuttleShardStore(dbQueue: databaseQueue)
             let service = ShuttleShardAnswerService(
+                config: loadedConfig,
                 shardStore: shardStore,
                 auditEventStore: ShuttleAuditEventStore(dbQueue: databaseQueue)
             )
@@ -532,6 +534,14 @@ private func mapShardAPIError(_ error: Error) -> Error {
             return HTTPError(.notFound)
         case .invalidShardState(let state):
             return HTTPError(.badRequest, message: "Invalid shard state \(state)")
+        }
+
+    case let error as ShuttleConcurrencyLimitError:
+        switch error {
+        case .maxQueuedShardsReached(let limit):
+            return HTTPError(.conflict, message: "Queued shard limit reached: \(limit)")
+        case .maxRunningShardsReached(let limit):
+            return HTTPError(.conflict, message: "Running shard limit reached: \(limit)")
         }
 
     case let error as ShuttleConflictResolutionValidationError:
