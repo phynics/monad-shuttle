@@ -99,6 +99,13 @@ public enum ShuttleWebUIAssets {
 
             <section>
               <div class="section-heading">
+                <h2>Push</h2>
+              </div>
+              <div id="push-panel" class="stack"></div>
+            </section>
+
+            <section>
+              <div class="section-heading">
                 <h2>Recent Events</h2>
               </div>
               <div id="events" class="stack"></div>
@@ -450,6 +457,7 @@ public enum ShuttleWebUIAssets {
       shards: [],
       conflicts: [],
       events: [],
+      config: null,
       shard: null,
       shardEvents: [],
       shardLogs: [],
@@ -479,9 +487,13 @@ public enum ShuttleWebUIAssets {
     }
 
     async function postJSON(path, body) {
+      const headers = { "Content-Type": "application/json", "Accept": "application/json" };
+      if (path === "/api/pushes") {
+        headers["Idempotency-Key"] = `ui-push-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      }
       const response = await fetch(path, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Accept": "application/json" },
+        headers,
         body: body === undefined ? undefined : JSON.stringify(body)
       });
       if (!response.ok) {
@@ -562,9 +574,57 @@ public enum ShuttleWebUIAssets {
               <span>${escapeHTML(conflict.id)}</span>
               <span>${conflict.blocking ? "blocking" : "non-blocking"}</span>
             </div>
+            <div class="detail-actions">
+              <button class="action-button resolve-conflict-button" data-conflict-id="${escapeHTML(conflict.id)}" type="button">Resolve</button>
+            </div>
           </article>
         `).join("")
         : `<div class="empty">No open conflicts</div>`;
+
+      document.querySelectorAll(".resolve-conflict-button").forEach((button) => {
+        button.addEventListener("click", async () => {
+          await postJSON(`/api/conflicts/${encodeURIComponent(button.dataset.conflictId)}/resolve`, { resolutionShardID: null });
+          await load();
+        });
+      });
+    }
+
+    function renderPushPanel() {
+      const targets = state.config?.pushTargets || [];
+      const repoState = state.status?.repository?.integrationState || "unknown";
+      byId("push-panel").innerHTML = targets.length
+        ? targets.map((target) => `
+          <article class="item">
+            <div class="item-header">
+              <h3>${escapeHTML(target.name)}</h3>
+              ${renderPill(target.branch)}
+            </div>
+            <div class="item-row">
+              <span>${escapeHTML(target.remote)}</span>
+              <span>${escapeHTML(target.branch)}</span>
+            </div>
+            <div class="detail-actions">
+              <button class="action-button push-button" data-target-name="${escapeHTML(target.name)}" type="button">Push shuttle-main</button>
+            </div>
+          </article>
+        `).join("")
+        : `<div class="empty">No push targets configured</div>`;
+
+      document.querySelectorAll(".push-button").forEach((button) => {
+        button.addEventListener("click", async () => {
+          if (repoState !== "open") {
+            const proceed = window.confirm(`Repository state is ${repoState}. Push anyway?`);
+            if (!proceed) {
+              return;
+            }
+          }
+          await postJSON("/api/pushes", {
+            targetName: button.dataset.targetName,
+            ref: { kind: "shuttle_main", shardID: null }
+          });
+          await load();
+        });
+      });
     }
 
     function renderEvents() {
@@ -738,22 +798,25 @@ public enum ShuttleWebUIAssets {
       renderStatus();
       renderQueue();
       renderConflicts();
+      renderPushPanel();
       renderEvents();
     }
 
     async function load() {
       try {
         state.error = null;
-        const [status, shards, conflicts, events] = await Promise.all([
+        const [status, shards, conflicts, events, config] = await Promise.all([
           getJSON("/api/status"),
           getJSON("/api/shards"),
           getJSON("/api/conflicts"),
-          getJSON("/api/events?limit=8")
+          getJSON("/api/events?limit=8"),
+          getJSON("/api/config")
         ]);
         state.status = status;
         state.shards = shards;
         state.conflicts = conflicts;
         state.events = events.items || [];
+        state.config = config;
       } catch (error) {
         state.error = error;
       }

@@ -25,4 +25,13 @@ final class ShuttleWebUISmokeTests: XCTestCase {
         XCTAssertTrue(ShuttleWebUIAssets.javascript.contains("/abandon"))
         XCTAssertTrue(ShuttleWebUIAssets.css.contains(".detail-layout"))
     }
+
+    func testPushAndConflictAssetsArePresent() {
+        XCTAssertTrue(ShuttleWebUIAssets.html.contains("id=\"push-panel\""))
+        XCTAssertTrue(ShuttleWebUIAssets.javascript.contains("/api/conflicts/"))
+        XCTAssertTrue(ShuttleWebUIAssets.javascript.contains("/api/pushes"))
+        XCTAssertTrue(ShuttleWebUIAssets.javascript.contains("Idempotency-Key"))
+        XCTAssertTrue(ShuttleWebUIAssets.javascript.contains("Push anyway?"))
+        XCTAssertTrue(ShuttleWebUIAssets.javascript.contains("/api/config"))
+    }
 }
