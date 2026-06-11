@@ -1,4 +1,5 @@
 import Foundation
+import GRDB
 import Hummingbird
 
 public enum ShuttleServerApp {
@@ -6,6 +7,8 @@ public enum ShuttleServerApp {
         public let configuration: ShuttleServerConfiguration
         let loadedConfig: ShuttleConfig?
         let managedRepository: ShuttleRepositoryBootstrapResult?
+        let databaseQueue: DatabaseQueue?
+        let repositoryStateStore: ShuttleRepositoryStateStore?
         let dockerAccessController: ShuttleDockerAccessController
         public let statusStore: ShuttleServerStatusStore
 
@@ -13,12 +16,16 @@ public enum ShuttleServerApp {
             configuration: ShuttleServerConfiguration,
             loadedConfig: ShuttleConfig?,
             managedRepository: ShuttleRepositoryBootstrapResult?,
+            databaseQueue: DatabaseQueue? = nil,
+            repositoryStateStore: ShuttleRepositoryStateStore? = nil,
             dockerAccessController: ShuttleDockerAccessController? = nil,
             statusStore: ShuttleServerStatusStore
         ) {
             self.configuration = configuration
             self.loadedConfig = loadedConfig
             self.managedRepository = managedRepository
+            self.databaseQueue = databaseQueue
+            self.repositoryStateStore = repositoryStateStore
             self.dockerAccessController = dockerAccessController
                 ?? ShuttleDockerAccessController(client: .live(), statusStore: statusStore)
             self.statusStore = statusStore
@@ -36,6 +43,8 @@ public enum ShuttleServerApp {
     ) async throws -> Environment {
         var loadedConfig: ShuttleConfig?
         var managedRepository: ShuttleRepositoryBootstrapResult?
+        var databaseQueue: DatabaseQueue?
+        var repositoryStateStore: ShuttleRepositoryStateStore?
         let dockerAccessController = ShuttleDockerAccessController(
             client: dockerClient,
             statusStore: statusStore
@@ -59,9 +68,20 @@ public enum ShuttleServerApp {
                     configPath: configPath,
                     statusStore: statusStore
                 )
+                let openedDatabase = try await openDatabase(
+                    loadedConfig: loadedConfig,
+                    statusStore: statusStore
+                )
+                databaseQueue = openedDatabase
+                repositoryStateStore = ShuttleRepositoryStateStore(dbQueue: openedDatabase)
                 managedRepository = try await bootstrapManagedRepository(
                     loadedConfig: loadedConfig,
                     statusStore: statusStore
+                )
+                try ensureRepositoryState(
+                    loadedConfig: loadedConfig,
+                    repositoryStateStore: repositoryStateStore,
+                    managedRepository: managedRepository
                 )
             } catch let startupError as ShuttleStartupError {
                 throw startupError
@@ -81,6 +101,8 @@ public enum ShuttleServerApp {
             configuration: configuration,
             loadedConfig: loadedConfig,
             managedRepository: managedRepository,
+            databaseQueue: databaseQueue,
+            repositoryStateStore: repositoryStateStore,
             dockerAccessController: dockerAccessController,
             statusStore: statusStore
         )
@@ -103,7 +125,7 @@ public enum ShuttleServerApp {
 
         let fileManager = FileManager.default
         let volumeChecks: [(subsystem: String, path: String, label: String)] = [
-            ("database", loadedConfig.paths.databasePath, "database volume"),
+            ("database", (loadedConfig.paths.databasePath as NSString).deletingLastPathComponent, "database volume"),
             ("git", loadedConfig.paths.gitPath, "git volume"),
             ("volumes", loadedConfig.paths.worktreesPath, "worktree volume"),
             ("volumes", loadedConfig.paths.logsPath, "log volume"),
@@ -167,12 +189,54 @@ public enum ShuttleServerApp {
         }
     }
 
+    private static func openDatabase(
+        loadedConfig: ShuttleConfig?,
+        statusStore: ShuttleServerStatusStore
+    ) async throws -> DatabaseQueue {
+        guard let loadedConfig else {
+            throw ShuttleStartupError.databaseOpenFailed("Missing loaded config for database startup")
+        }
+
+        do {
+            return try ShuttleDatabase.openMigrated(atPath: loadedConfig.paths.databasePath)
+        } catch {
+            await statusStore.setServerState(.fatal)
+            await statusStore.setSubsystem(
+                "database",
+                status: .init(status: .failed, detail: "Database open failed: \(error)")
+            )
+            throw ShuttleStartupError.databaseOpenFailed(String(describing: error))
+        }
+    }
+
+    private static func ensureRepositoryState(
+        loadedConfig: ShuttleConfig?,
+        repositoryStateStore: ShuttleRepositoryStateStore?,
+        managedRepository: ShuttleRepositoryBootstrapResult?
+    ) throws {
+        guard let loadedConfig, let repositoryStateStore, let managedRepository else {
+            return
+        }
+
+        if try repositoryStateStore.fetch() == nil {
+            try repositoryStateStore.upsert(
+                config: loadedConfig,
+                integrationState: .open,
+                shuttleMainCommit: try ShuttleGitShell.run(
+                    ["--git-dir", managedRepository.bareRepositoryPath, "rev-parse", "refs/heads/\(managedRepository.shuttleMainBranch)"]
+                ).stdout,
+                blockedConflictID: nil
+            )
+        }
+    }
+
     public static func makeRouter(environment: Environment) -> Router<BasicRequestContext> {
         let router = Router(context: BasicRequestContext.self)
         ShuttleServerRoutes.register(
             on: router,
             statusStore: environment.statusStore,
-            loadedConfig: environment.loadedConfig
+            loadedConfig: environment.loadedConfig,
+            repositoryStateStore: environment.repositoryStateStore
         )
         return router
     }

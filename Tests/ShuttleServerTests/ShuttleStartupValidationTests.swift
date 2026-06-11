@@ -111,7 +111,7 @@ final class ShuttleStartupValidationTests: XCTestCase {
           max_log_bytes_per_shard: 5242880
 
         paths:
-          database: \(db.path)
+          database: \(db.path)/shuttle.sqlite
           git: \(git.path)
           worktrees: \(worktrees.path)
           logs: \(logs.path)

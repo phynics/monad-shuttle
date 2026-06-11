@@ -10,8 +10,8 @@ public actor ShuttleServerStatusStore {
         self.subsystems = subsystems
     }
 
-    public func snapshot() -> ShuttleStatusResponse {
-        ShuttleStatusResponse(serverState: serverState, subsystems: subsystems)
+    public func snapshot(repository: ShuttleStatusResponse.Repository? = nil) -> ShuttleStatusResponse {
+        ShuttleStatusResponse(serverState: serverState, subsystems: subsystems, repository: repository)
     }
 
     public func setServerState(_ state: ShuttleServerState) {
