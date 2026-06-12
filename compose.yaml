@@ -1,8 +1,8 @@
 services:
   shuttle:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: Shuttle/Dockerfile
     image: shuttle:dev
     ports:
       - "8080:8080"

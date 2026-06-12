@@ -2,9 +2,12 @@ FROM swift:6.0-jammy AS build
 
 WORKDIR /workspace
 
-COPY Package.swift Package.resolved ./
-COPY Sources ./Sources
-COPY Tests ./Tests
+COPY Shuttle/Package.swift Shuttle/Package.resolved ./Shuttle/
+COPY Shuttle/Sources ./Shuttle/Sources
+COPY Shuttle/Tests ./Shuttle/Tests
+COPY PositronicKit ./PositronicKit
+
+WORKDIR /workspace/Shuttle
 
 RUN swift build -c release --product ShuttleServer
 
@@ -16,7 +19,7 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY --from=build /workspace/.build/release/ShuttleServer /usr/local/bin/ShuttleServer
+COPY --from=build /workspace/Shuttle/.build/release/ShuttleServer /usr/local/bin/ShuttleServer
 
 ENV SHUTTLE_CONFIG_PATH=/config/shuttle.yaml
 

@@ -1,6 +1,6 @@
 # Shuttle
 
-Shuttle is an experimental coding environment for managing one repository as a Docker-deployable workspace system.
+Shuttle is an experimental coding environment for managing one repository as a Docker-deployable shard workspace system.
 
 It is intended to:
 
@@ -14,17 +14,19 @@ It is intended to:
 
 This repository is an experiment in building a fully AI-coded project under human direction.
 
-It is not production-ready. The current codebase covers the early v1 foundation:
+It is not production-ready. The current codebase now covers the Shuttle v1 backlog through hardening work, including:
 
 - Swift package and server bootstrap
 - Docker deployment skeleton
-- YAML config loading and validation
+- YAML config loading, validation, and redaction
 - SQLite schema and stores
-- repository bootstrap and worktree creation
-- shard container and command execution plumbing
+- repository bootstrap, `shuttle-main`, and worktree creation
+- per-shard container and scoped command execution plumbing
 - shard workspace file, git, and lifecycle tools
-
-Work is still ongoing. The next major step after the current state is the in-process PositronicKit agent runner.
+- shard agent runner integration with PositronicKit
+- integration gate, squash merge, conflict handling, refresh, and push controls
+- REST APIs and operator UI
+- startup reconciliation, retention cleanup, concurrency limits, and end-to-end fixture coverage
 
 ## Project Context
 
@@ -47,6 +49,28 @@ monad-project/
   PositronicKit/
   Shuttle/
 ```
+
+## V1 Scope
+
+Shuttle v1 covers:
+
+- one repository per Shuttle server
+- REST APIs and a local/admin operator UI
+- scoped shard execution in per-worktree containers
+- manual conflict handling
+- manual push actions to configured targets
+
+## V1 Non-Goals
+
+Shuttle v1 does not attempt:
+
+- multi-repository management
+- PositronicKit management workspaces
+- distributed workers
+- auto-running conflict-resolution shards
+- fine-grained auth
+- Shuttle-owned CI
+- automatic pushes
 
 ## Experiment Framing
 
@@ -95,6 +119,24 @@ Implemented tickets so far include:
 - `SHUT-043` raw log rotation
 - `SHUT-050` shard workspace file and git tools
 - `SHUT-051` shard lifecycle tools
+- `SHUT-052` shard runner
+- `SHUT-053` finish-request flow
+- `SHUT-060` integration gate
+- `SHUT-061` squash merge
+- `SHUT-062` conflict records
+- `SHUT-063` manual conflict resolution
+- `SHUT-064` manual push actions
+- `SHUT-070` status and config APIs
+- `SHUT-071` shard APIs
+- `SHUT-072` logs and events APIs
+- `SHUT-073` conflict, refresh, and push APIs
+- `SHUT-080` queue UI
+- `SHUT-081` shard detail UI
+- `SHUT-082` push and conflict UI
+- `SHUT-090` startup reconciliation
+- `SHUT-091` concurrency limits
+- `SHUT-092` retention cleanup
+- `SHUT-100` end-to-end local fixture scenario
 
 ## Repository Layout
 
@@ -107,6 +149,7 @@ Tests/
   ShuttleWebUITests/
 docs/
   deployment.md
+  operations.md
   superpowers/specs/
   superpowers/plans/
 deploy/
@@ -135,6 +178,8 @@ The repository already contains:
 - [Dockerfile](Dockerfile)
 - [compose.yaml](compose.yaml)
 - [docs/deployment.md](docs/deployment.md)
+- [docs/operations.md](docs/operations.md)
+- [docs/release-notes-v1.md](docs/release-notes-v1.md)
 - [deploy/config/shuttle.example.yaml](deploy/config/shuttle.example.yaml)
 
 ## License

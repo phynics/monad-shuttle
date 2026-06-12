@@ -36,7 +36,7 @@ paths:
 push_targets:
   - name: origin-main
     remote: origin
-    branch: main
+    branch: published-main
 
 auth:
   mode: local_admin
