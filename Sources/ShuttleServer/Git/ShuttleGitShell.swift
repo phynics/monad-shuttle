@@ -1,4 +1,5 @@
 import Foundation
+import Logging
 
 struct ShuttleGitShellResult: Equatable, Sendable {
     let stdout: String
@@ -13,7 +14,8 @@ enum ShuttleGitShellError: Error, Equatable, Sendable {
 enum ShuttleGitShell {
     static func run(
         _ arguments: [String],
-        workingDirectory: String? = nil
+        workingDirectory: String? = nil,
+        logger: Logger? = nil
     ) throws -> ShuttleGitShellResult {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
@@ -40,6 +42,15 @@ enum ShuttleGitShell {
         }
 
         guard process.terminationStatus == 0 else {
+            let gitLogger = (logger ?? ShuttleLogFactory.make(.git)).withMetadata([
+                ShuttleLogField.operation: .string("git_command"),
+                ShuttleLogField.errorCode: .string("command_failed"),
+            ])
+            gitLogger.error("git_command_failed", metadata: [
+                "git.command": .array(arguments.map { .string($0) }),
+                "git.status": .stringConvertible(process.terminationStatus),
+                ShuttleLogField.outcome: .string("error"),
+            ])
             throw ShuttleGitShellError.commandFailed(
                 command: arguments,
                 status: process.terminationStatus,

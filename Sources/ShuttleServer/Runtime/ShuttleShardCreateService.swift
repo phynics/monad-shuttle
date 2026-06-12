@@ -1,4 +1,5 @@
 import Foundation
+import Logging
 
 struct ShuttleShardCreateResult: Codable, Equatable, Sendable {
     let shardID: String
@@ -17,6 +18,23 @@ struct ShuttleShardCreateService {
     let workspaceService: ShuttleShardWorkspaceService
     let idempotencyStore: ShuttleIdempotencyStore
     let auditEventStore: ShuttleAuditEventStore
+    let logger: Logger
+
+    init(
+        config: ShuttleConfig,
+        shardStore: ShuttleShardStore,
+        workspaceService: ShuttleShardWorkspaceService,
+        idempotencyStore: ShuttleIdempotencyStore,
+        auditEventStore: ShuttleAuditEventStore,
+        logger: Logger = ShuttleLogFactory.make(.shard)
+    ) {
+        self.config = config
+        self.shardStore = shardStore
+        self.workspaceService = workspaceService
+        self.idempotencyStore = idempotencyStore
+        self.auditEventStore = auditEventStore
+        self.logger = logger
+    }
 
     func createShard(
         title: String,
@@ -24,6 +42,9 @@ struct ShuttleShardCreateService {
         idempotencyKey: String,
         actor: ShuttleActorIdentity? = nil
     ) throws -> ShuttleShardCreateResult {
+        let logger = self.logger.withMetadata([
+            ShuttleLogField.operation: .string("create_shard"),
+        ]).withMetadata(ShuttleLogMetadata.actor(actor))
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedSpec = spec.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTitle.isEmpty else {
@@ -68,6 +89,9 @@ struct ShuttleShardCreateService {
 
         switch idemResult {
         case .replayed(let record):
+            logger.info("shard_create_replayed", metadata: [
+                ShuttleLogField.outcome: .string("replayed"),
+            ])
             return try decode(resultJSON: record.responseJSON)
         case .recorded:
             break
@@ -89,6 +113,11 @@ struct ShuttleShardCreateService {
             title: trimmedTitle,
             actor: actor
         )
+        logger.info("shard_created", metadata: [
+            ShuttleLogField.outcome: .string("success"),
+            ShuttleLogField.shardID: .string(provisionalShardID),
+            ShuttleLogField.branch: .string(branchName),
+        ])
         return .init(shardID: provisionalShardID)
     }
 

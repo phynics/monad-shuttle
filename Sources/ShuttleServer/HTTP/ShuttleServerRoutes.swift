@@ -61,7 +61,8 @@ public enum ShuttleServerRoutes {
                     shardStore: shardStore,
                     workspaceService: workspaceService,
                     idempotencyStore: ShuttleIdempotencyStore(dbQueue: databaseQueue),
-                    auditEventStore: ShuttleAuditEventStore(dbQueue: databaseQueue)
+                    auditEventStore: ShuttleAuditEventStore(dbQueue: databaseQueue),
+                    logger: ShuttleLogFactory.make(.shard, inheriting: context.logger)
                 )
                 let result = try createService.createShard(
                     title: body.title,
@@ -119,7 +120,8 @@ public enum ShuttleServerRoutes {
             let shardStore = ShuttleShardStore(dbQueue: databaseQueue)
             let service = ShuttleShardFinishRequestService(
                 shardStore: shardStore,
-                auditEventStore: ShuttleAuditEventStore(dbQueue: databaseQueue)
+                auditEventStore: ShuttleAuditEventStore(dbQueue: databaseQueue),
+                logger: ShuttleLogFactory.make(.shard, inheriting: context.logger)
             )
             do {
                 try await service.requestFinish(shardID: shardID)
@@ -144,7 +146,8 @@ public enum ShuttleServerRoutes {
             let service = ShuttleShardAnswerService(
                 config: loadedConfig,
                 shardStore: shardStore,
-                auditEventStore: ShuttleAuditEventStore(dbQueue: databaseQueue)
+                auditEventStore: ShuttleAuditEventStore(dbQueue: databaseQueue),
+                logger: ShuttleLogFactory.make(.shard, inheriting: context.logger)
             )
             do {
                 try await service.answer(shardID: shardID, answer: body.answer)
@@ -169,7 +172,8 @@ public enum ShuttleServerRoutes {
             let lifecycleService = ShuttleShardLifecycleService(
                 shardStore: shardStore,
                 completionReportStore: ShuttleCompletionReportStore(dbQueue: databaseQueue),
-                auditEventStore: ShuttleAuditEventStore(dbQueue: databaseQueue)
+                auditEventStore: ShuttleAuditEventStore(dbQueue: databaseQueue),
+                logger: ShuttleLogFactory.make(.shard, inheriting: context.logger)
             )
             do {
                 try await lifecycleService.abandonShard(shardID: shardID, reason: body.reason)
@@ -318,7 +322,8 @@ public enum ShuttleServerRoutes {
                     repositoryStateStore: repositoryStateStore,
                     conflictStore: conflictStore,
                     config: loadedConfig,
-                    auditEventStore: auditEventStore
+                    auditEventStore: auditEventStore,
+                    logger: ShuttleLogFactory.make(.conflict, inheriting: context.logger)
                 )
                 let resolved = try service.resolveConflict(
                     conflictID: conflictID,
@@ -330,7 +335,7 @@ public enum ShuttleServerRoutes {
             }
         }
 
-        router.post("/api/repository/refresh") { _, _ in
+        router.post("/api/repository/refresh") { _, context in
             guard let databaseQueue, let loadedConfig else {
                 throw HTTPError(.serviceUnavailable)
             }
@@ -343,12 +348,14 @@ public enum ShuttleServerRoutes {
                     repositoryStateStore: repositoryStateStore,
                     conflictStore: conflictStore,
                     config: loadedConfig,
-                    auditEventStore: auditEventStore
+                    auditEventStore: auditEventStore,
+                    logger: ShuttleLogFactory.make(.conflict, inheriting: context.logger)
                 )
                 let result = try ShuttleUpstreamRefreshService(
                     config: loadedConfig,
                     repositoryStateStore: repositoryStateStore,
-                    conflictService: conflictService
+                    conflictService: conflictService,
+                    logger: ShuttleLogFactory.make(.refresh, inheriting: context.logger)
                 ).refresh()
                 return ShuttleUpstreamRefreshResponse(result: result)
             } catch {
@@ -377,7 +384,8 @@ public enum ShuttleServerRoutes {
                     repositoryStateStore: repositoryStateStore,
                     shardStore: shardStore,
                     idempotencyStore: idempotencyStore,
-                    auditEventStore: auditEventStore
+                    auditEventStore: auditEventStore,
+                    logger: ShuttleLogFactory.make(.push, inheriting: context.logger)
                 )
                 let result = try pushService.push(
                     targetName: body.targetName,

@@ -1,4 +1,5 @@
 import Foundation
+import Logging
 
 enum ShuttleShardAnswerServiceError: Error, Equatable, Sendable {
     case shardNotFound(String)
@@ -10,12 +11,28 @@ struct ShuttleShardAnswerService {
     let config: ShuttleConfig
     let shardStore: ShuttleShardStore
     let auditEventStore: ShuttleAuditEventStore
+    let logger: Logger
+
+    init(
+        config: ShuttleConfig,
+        shardStore: ShuttleShardStore,
+        auditEventStore: ShuttleAuditEventStore,
+        logger: Logger = ShuttleLogFactory.make(.shard)
+    ) {
+        self.config = config
+        self.shardStore = shardStore
+        self.auditEventStore = auditEventStore
+        self.logger = logger
+    }
 
     func answer(
         shardID: String,
         answer: String,
         actor: ShuttleActorIdentity? = nil
     ) async throws {
+        let logger = self.logger.withMetadata(ShuttleLogMetadata.shard(shardID)).withMetadata([
+            ShuttleLogField.operation: .string("answer_shard"),
+        ]).withMetadata(ShuttleLogMetadata.actor(actor))
         let trimmedAnswer = answer.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedAnswer.isEmpty else {
             throw ShuttleShardAnswerServiceError.emptyAnswer
@@ -40,5 +57,8 @@ struct ShuttleShardAnswerService {
             answerSummary: trimmedAnswer,
             actor: actor
         )
+        logger.info("shard_answered", metadata: [
+            ShuttleLogField.outcome: .string("success"),
+        ])
     }
 }

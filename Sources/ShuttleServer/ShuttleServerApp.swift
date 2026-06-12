@@ -1,6 +1,7 @@
 import Foundation
 import GRDB
 import Hummingbird
+import Logging
 
 public enum ShuttleServerApp {
     public struct Environment: Sendable {
@@ -41,17 +42,27 @@ public enum ShuttleServerApp {
         statusStore: ShuttleServerStatusStore = ShuttleServerStatusStore(),
         dockerClient: ShuttleDockerClient = .live()
     ) async throws -> Environment {
+        ShuttleLogBootstrap.bootstrapIfNeeded()
+        let logger = ShuttleLogFactory.make(.startup).withMetadata([
+            ShuttleLogField.operation: .string("make_environment"),
+        ])
         var loadedConfig: ShuttleConfig?
         var managedRepository: ShuttleRepositoryBootstrapResult?
         var databaseQueue: DatabaseQueue?
         var repositoryStateStore: ShuttleRepositoryStateStore?
         let dockerAccessController = ShuttleDockerAccessController(
             client: dockerClient,
-            statusStore: statusStore
+            statusStore: statusStore,
+            logger: ShuttleLogFactory.make(.docker)
         )
+        logger.info("environment_starting")
 
         if let configPath = configuration.configPath,
            !FileManager.default.isReadableFile(atPath: configPath) {
+            logger.critical("environment_startup_failed", metadata: [
+                ShuttleLogField.errorCode: .string("unreadable_config_path"),
+                ShuttleLogField.outcome: .string("fatal"),
+            ])
             await statusStore.setServerState(.fatal)
             await statusStore.setSubsystem(
                 "config",
@@ -63,6 +74,7 @@ public enum ShuttleServerApp {
         if let configPath = configuration.configPath {
             do {
                 loadedConfig = try ShuttleConfigLoader.load(fromFilePath: configPath)
+                logger.info("config_loaded")
                 try await validateStartupPaths(
                     loadedConfig: loadedConfig,
                     configPath: configPath,
@@ -98,8 +110,16 @@ public enum ShuttleServerApp {
                     statusStore: statusStore
                 )
             } catch let startupError as ShuttleStartupError {
+                logger.critical("environment_startup_failed", metadata: [
+                    ShuttleLogField.errorCode: .string("startup_error"),
+                    ShuttleLogField.outcome: .string("fatal"),
+                ])
                 throw startupError
             } catch {
+                logger.critical("environment_startup_failed", metadata: [
+                    ShuttleLogField.errorCode: .string("invalid_config"),
+                    ShuttleLogField.outcome: .string("fatal"),
+                ])
                 await statusStore.setServerState(.fatal)
                 await statusStore.setSubsystem(
                     "config",
@@ -110,6 +130,9 @@ public enum ShuttleServerApp {
         }
 
         _ = await dockerAccessController.probeHealth()
+        logger.info("environment_ready", metadata: [
+            ShuttleLogField.outcome: .string("success"),
+        ])
 
         return Environment(
             configuration: configuration,
@@ -325,7 +348,9 @@ public enum ShuttleServerApp {
     }
 
     public static func makeRouter(environment: Environment) -> Router<BasicRequestContext> {
+        ShuttleLogBootstrap.bootstrapIfNeeded()
         let router = Router(context: BasicRequestContext.self)
+        router.add(middleware: ShuttleRequestLoggingMiddleware<BasicRequestContext>())
         ShuttleServerRoutes.register(
             on: router,
             statusStore: environment.statusStore,
@@ -337,6 +362,7 @@ public enum ShuttleServerApp {
     }
 
     public static func main(_ arguments: [String] = CommandLine.arguments) async throws {
+        ShuttleLogBootstrap.bootstrapIfNeeded()
         let configuration = try ShuttleServerConfiguration.fromCommandLine(arguments)
         let environment = try await makeEnvironment(configuration: configuration)
         let router = makeRouter(environment: environment)
@@ -344,10 +370,13 @@ public enum ShuttleServerApp {
             router: router,
             configuration: .init(
                 address: .hostname(environment.configuration.host, port: environment.configuration.port)
-            )
+            ),
+            logger: ShuttleLogFactory.make(.http)
         )
 
-        print(makeStartupBanner())
+        app.logger.info("server_bootstrap_ready", metadata: [
+            ShuttleLogField.outcome: .string("success"),
+        ])
         try await app.runService()
     }
 }

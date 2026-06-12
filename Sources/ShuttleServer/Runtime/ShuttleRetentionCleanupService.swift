@@ -1,4 +1,5 @@
 import Foundation
+import Logging
 
 struct ShuttleRetentionCleanupResult: Equatable, Sendable {
     let cleanedShardCount: Int
@@ -15,8 +16,12 @@ struct ShuttleRetentionCleanupService {
     let worktreeManager: ShuttleWorktreeManager
     let commandLogStore: ShuttleCommandLogStore
     let agentTranscriptStore: ShuttleAgentTranscriptStore
+    let logger: Logger = ShuttleLogFactory.make(.retention)
 
     func cleanup(now: Date = Date()) throws -> ShuttleRetentionCleanupResult {
+        let logger = self.logger.withMetadata([
+            ShuttleLogField.operation: .string("retention_cleanup"),
+        ])
         let expiredShards = try shardStore.fetchExpiredRetainedShards(now: now)
         var cleanedShardCount = 0
 
@@ -37,18 +42,30 @@ struct ShuttleRetentionCleanupService {
                 worktreeRemoved: worktreeExists,
                 branchRemoved: branchExists
             )
+            logger.info("retained_shard_cleaned", metadata: [
+                ShuttleLogField.outcome: .string("success"),
+                ShuttleLogField.shardID: .string(detail.shard.id),
+                ShuttleLogField.branch: .string(runtimeMetadata.branchName),
+            ])
             cleanedShardCount += 1
         }
 
         let commandCleanup = try commandLogStore.cleanupExpiredEntries(now: now)
         let agentCleanup = try agentTranscriptStore.cleanupExpiredEntries(now: now)
 
-        return ShuttleRetentionCleanupResult(
+        let result = ShuttleRetentionCleanupResult(
             cleanedShardCount: cleanedShardCount,
             deletedCommandLogIndexCount: commandCleanup.deletedIndexCount,
             deletedCommandLogFileCount: commandCleanup.deletedFileCount,
             deletedAgentLogIndexCount: agentCleanup.deletedIndexCount,
             deletedAgentLogFileCount: agentCleanup.deletedFileCount
         )
+        logger.info("retention_cleanup_completed", metadata: [
+            ShuttleLogField.outcome: .string("success"),
+            "cleaned_shards": .stringConvertible(result.cleanedShardCount),
+            "deleted_command_log_indexes": .stringConvertible(result.deletedCommandLogIndexCount),
+            "deleted_agent_log_indexes": .stringConvertible(result.deletedAgentLogIndexCount),
+        ])
+        return result
     }
 }

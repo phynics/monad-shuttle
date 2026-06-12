@@ -1,4 +1,5 @@
 import Foundation
+import Logging
 
 struct ShuttleSquashMergeResult: Equatable, Sendable {
     let shardID: String
@@ -20,12 +21,43 @@ struct ShuttleSquashMergeService {
     let integrationGateService: ShuttleIntegrationGateService
     let shardWorkspaceService: ShuttleShardWorkspaceService
     let conflictService: ShuttleConflictService?
+    let logger: Logger
+
+    init(
+        config: ShuttleConfig,
+        shardStore: ShuttleShardStore,
+        repositoryStateStore: ShuttleRepositoryStateStore,
+        integrationGateService: ShuttleIntegrationGateService,
+        shardWorkspaceService: ShuttleShardWorkspaceService,
+        conflictService: ShuttleConflictService?,
+        logger: Logger = ShuttleLogFactory.make(.integration)
+    ) {
+        self.config = config
+        self.shardStore = shardStore
+        self.repositoryStateStore = repositoryStateStore
+        self.integrationGateService = integrationGateService
+        self.shardWorkspaceService = shardWorkspaceService
+        self.conflictService = conflictService
+        self.logger = logger
+    }
 
     func merge(shardID: String) throws -> ShuttleSquashMergeResult {
+        let logger = self.logger.withMetadata(ShuttleLogMetadata.shard(shardID)).withMetadata([
+            ShuttleLogField.operation: .string("squash_merge"),
+        ])
         guard let shard = try shardStore.fetchShard(id: shardID) else {
+            logger.warning("merge_rejected", metadata: [
+                ShuttleLogField.outcome: .string("rejected"),
+                ShuttleLogField.errorCode: .string("shard_not_ready"),
+            ])
             throw ShuttleSquashMergeServiceError.shardNotReady(shardID)
         }
         guard shard.state == .integrating else {
+            logger.warning("merge_rejected", metadata: [
+                ShuttleLogField.outcome: .string("rejected"),
+                ShuttleLogField.errorCode: .string("invalid_shard_state"),
+                ShuttleLogField.shardState: .string(shard.state.rawValue),
+            ])
             throw ShuttleSquashMergeServiceError.shardNotReady(shardID)
         }
 
@@ -35,14 +67,27 @@ struct ShuttleSquashMergeService {
         } catch let error as ShuttleIntegrationGateError {
             switch error {
             case .repositoryNotOpen(let state):
+                logger.warning("merge_rejected", metadata: [
+                    ShuttleLogField.outcome: .string("rejected"),
+                    ShuttleLogField.repoState: .string(state.rawValue),
+                    ShuttleLogField.errorCode: .string("repository_not_open"),
+                ])
                 throw ShuttleSquashMergeServiceError.integrationLocked(state)
             case .branchNotMergeable:
                 let conflict = try recordMergeConflict(
                     shardID: shardID,
                     reason: "branch_not_mergeable"
                 )
+                logger.warning("merge_conflict_recorded", metadata: [
+                    ShuttleLogField.outcome: .string("conflict"),
+                    ShuttleLogField.conflictID: .string(conflict.id),
+                ])
                 throw ShuttleSquashMergeServiceError.conflictRecorded(conflict.id)
             default:
+                logger.error("merge_failed", metadata: [
+                    ShuttleLogField.outcome: .string("error"),
+                    ShuttleLogField.errorCode: .string("integration_gate_failed"),
+                ])
                 throw ShuttleSquashMergeServiceError.mergeFailed(String(describing: error))
             }
         }
@@ -56,8 +101,17 @@ struct ShuttleSquashMergeService {
         } catch let error as ShuttleRepositoryStateStoreError {
             switch error {
             case .stateMismatch(_, let actual):
+                logger.warning("merge_rejected", metadata: [
+                    ShuttleLogField.outcome: .string("rejected"),
+                    ShuttleLogField.repoState: .string(actual.rawValue),
+                    ShuttleLogField.errorCode: .string("integration_locked"),
+                ])
                 throw ShuttleSquashMergeServiceError.integrationLocked(actual)
             default:
+                logger.error("merge_failed", metadata: [
+                    ShuttleLogField.outcome: .string("error"),
+                    ShuttleLogField.errorCode: .string("state_transition_failed"),
+                ])
                 throw ShuttleSquashMergeServiceError.mergeFailed(String(describing: error))
             }
         }
@@ -82,6 +136,11 @@ struct ShuttleSquashMergeService {
                 retainedUntil: retainedUntil
             )
         } catch let error as ShuttleSquashMergeServiceError {
+            logger.log(
+                level: .warning,
+                "merge_completed_with_error",
+                metadata: [ShuttleLogField.outcome: .string("error")]
+            )
             if case .conflictRecorded = error {
                 // Repository is intentionally left blocked.
             } else {
@@ -99,6 +158,10 @@ struct ShuttleSquashMergeService {
                     shardID: shardID,
                     reason: "merge_conflict"
                 )
+                logger.warning("merge_conflict_recorded", metadata: [
+                    ShuttleLogField.outcome: .string("conflict"),
+                    ShuttleLogField.conflictID: .string(conflict.id),
+                ])
                 throw ShuttleSquashMergeServiceError.conflictRecorded(conflict.id)
             }
 
@@ -107,6 +170,10 @@ struct ShuttleSquashMergeService {
                 to: .open,
                 config: config
             )
+            logger.error("merge_failed", metadata: [
+                ShuttleLogField.outcome: .string("error"),
+                ShuttleLogField.errorCode: .string("merge_failed"),
+            ])
             throw ShuttleSquashMergeServiceError.mergeFailed(error.localizedDescription)
         }
     }

@@ -1,4 +1,5 @@
 import Foundation
+import Logging
 
 enum ShuttlePushRef: Equatable, Sendable {
     case shuttleMain
@@ -30,6 +31,23 @@ struct ShuttlePushService {
     let shardStore: ShuttleShardStore
     let idempotencyStore: ShuttleIdempotencyStore
     let auditEventStore: ShuttleAuditEventStore
+    let logger: Logger
+
+    init(
+        config: ShuttleConfig,
+        repositoryStateStore: ShuttleRepositoryStateStore,
+        shardStore: ShuttleShardStore,
+        idempotencyStore: ShuttleIdempotencyStore,
+        auditEventStore: ShuttleAuditEventStore,
+        logger: Logger = ShuttleLogFactory.make(.push)
+    ) {
+        self.config = config
+        self.repositoryStateStore = repositoryStateStore
+        self.shardStore = shardStore
+        self.idempotencyStore = idempotencyStore
+        self.auditEventStore = auditEventStore
+        self.logger = logger
+    }
 
     func push(
         targetName: String,
@@ -37,6 +55,9 @@ struct ShuttlePushService {
         idempotencyKey: String,
         actor: ShuttleActorIdentity?
     ) throws -> ShuttlePushResult {
+        let logger = self.logger.withMetadata([
+            ShuttleLogField.operation: .string("push"),
+        ]).withMetadata(ShuttleLogMetadata.actor(actor))
         let target = try configuredTarget(named: targetName)
         let localRef = try resolveLocalRef(for: ref)
         let remoteRef = "refs/heads/\(target.branch)"
@@ -72,6 +93,9 @@ struct ShuttlePushService {
 
         switch idempotencyResult {
         case .replayed(let record):
+            logger.info("push_replayed", metadata: [
+                ShuttleLogField.outcome: .string("replayed"),
+            ])
             return try decode(resultJSON: record.responseJSON)
         case .recorded:
             break
@@ -86,9 +110,17 @@ struct ShuttlePushService {
                     "push",
                     target.remote,
                     "\(localRef):\(remoteRef)",
-                ]
+                ],
+                logger: logger.withMetadata([
+                    "git.local_ref": .string(localRef),
+                    "git.remote_ref": .string(remoteRef),
+                ])
             )
         } catch {
+            logger.error("push_failed", metadata: [
+                ShuttleLogField.outcome: .string("error"),
+                ShuttleLogField.errorCode: .string("push_failed"),
+            ])
             throw ShuttlePushServiceError.pushFailed(error.localizedDescription)
         }
 
@@ -108,6 +140,16 @@ struct ShuttlePushService {
             warnings: warnings,
             actor: actor
         )
+        var successMetadata: Logger.Metadata = [
+            ShuttleLogField.outcome: .string("success"),
+            "push.target_name": .string(targetName),
+            "push.local_ref": .string(localRef),
+            "push.remote_ref": .string(remoteRef),
+        ]
+        if !warnings.isEmpty {
+            successMetadata["warnings"] = .array(warnings.map { .string($0) })
+        }
+        logger.info("push_succeeded", metadata: successMetadata)
         return result
     }
 

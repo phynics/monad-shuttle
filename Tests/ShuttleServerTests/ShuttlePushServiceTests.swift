@@ -65,7 +65,7 @@ final class ShuttlePushServiceTests: XCTestCase {
         XCTAssertEqual(second, first)
     }
 
-    func testPushIncludesWarningMetadataWhenRepositoryBlocked() throws {
+    func testPushIncludesWarningMetadataWhenRepositoryBlocked() async throws {
         let fixture = try makeFixture()
         try fixture.repositoryStateStore.upsert(
             config: fixture.config,
@@ -73,14 +73,16 @@ final class ShuttlePushServiceTests: XCTestCase {
             blockedConflictID: "conflict-1"
         )
 
-        let result = try fixture.pushService.push(
-            targetName: "origin-main",
-            ref: .shuttleMain,
-            idempotencyKey: "push-4",
-            actor: ShuttleActorIdentity(actorType: "api_client", actorID: "client-2")
-        )
+        let result = try await ShuttleLogTestSupport.captureLogs {
+            try fixture.pushService.push(
+                targetName: "origin-main",
+                ref: .shuttleMain,
+                idempotencyKey: "push-4",
+                actor: ShuttleActorIdentity(actorType: "api_client", actorID: "client-2")
+            )
+        }
 
-        XCTAssertEqual(result.warnings, ["repository_state:blocked"])
+        XCTAssertEqual(result.result.warnings, ["repository_state:blocked"])
 
         let events = try fixture.auditEventStore.fetchAll()
         XCTAssertTrue(
@@ -90,6 +92,15 @@ final class ShuttlePushServiceTests: XCTestCase {
                 $0.payload["warnings"] == "repository_state:blocked"
             })
         )
+
+        let pushLine = try XCTUnwrap(
+            result.lines.compactMap { line -> [String: Any]? in
+                guard let data = line.data(using: .utf8) else { return nil }
+                return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            }.last(where: { ($0["message"] as? String) == "push_succeeded" })
+        )
+        let metadata = try XCTUnwrap(pushLine["metadata"] as? [String: Any])
+        XCTAssertEqual(metadata["warnings"] as? [String], ["repository_state:blocked"])
     }
 
     private func makeFixture() throws -> Fixture {

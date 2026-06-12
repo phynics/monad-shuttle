@@ -14,6 +14,7 @@ let package = Package(
         .package(url: "https://github.com/groue/GRDB.swift", from: "7.0.0"),
         .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.0.0"),
         .package(url: "https://github.com/jpsim/Yams", "5.4.0"..<"7.0.0"),
+        .package(url: "https://github.com/apple/swift-log.git", from: "1.5.4"),
         .package(path: "../PositronicKit"),
     ],
     targets: [
@@ -24,6 +25,7 @@ let package = Package(
                 .product(name: "PositronicKit", package: "PositronicKit"),
                 .product(name: "PKShared", package: "PositronicKit"),
                 .product(name: "GRDB", package: "GRDB.swift"),
+                .product(name: "Logging", package: "swift-log"),
                 .product(name: "Yams", package: "Yams"),
                 "ShuttleWebUI",
             ],

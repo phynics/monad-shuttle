@@ -1,4 +1,5 @@
 import Foundation
+import Logging
 
 struct ShuttleUpstreamRefreshResult: Equatable, Sendable {
     enum Outcome: String, Equatable, Sendable {
@@ -22,10 +23,31 @@ struct ShuttleUpstreamRefreshService {
     let config: ShuttleConfig
     let repositoryStateStore: ShuttleRepositoryStateStore
     let conflictService: ShuttleConflictService
+    let logger: Logger
+
+    init(
+        config: ShuttleConfig,
+        repositoryStateStore: ShuttleRepositoryStateStore,
+        conflictService: ShuttleConflictService,
+        logger: Logger = ShuttleLogFactory.make(.refresh)
+    ) {
+        self.config = config
+        self.repositoryStateStore = repositoryStateStore
+        self.conflictService = conflictService
+        self.logger = logger
+    }
 
     func refresh() throws -> ShuttleUpstreamRefreshResult {
+        let logger = self.logger.withMetadata([
+            ShuttleLogField.operation: .string("refresh"),
+        ])
         let currentState = try repositoryStateStore.fetchIntegrationState()
         guard currentState == .open else {
+            logger.warning("refresh_rejected", metadata: [
+                ShuttleLogField.outcome: .string("rejected"),
+                ShuttleLogField.repoState: .string(currentState.rawValue),
+                ShuttleLogField.errorCode: .string("repository_not_open"),
+            ])
             throw ShuttleUpstreamRefreshServiceError.integrationLocked(currentState)
         }
 
@@ -48,7 +70,8 @@ struct ShuttleUpstreamRefreshService {
                     "fetch",
                     "origin",
                     "refs/heads/\(config.repository.sourceBranch):\(upstreamRef)",
-                ]
+                ],
+                logger: logger
             )
 
             let upstreamCommit = try revParse(upstreamRef, bareRepositoryPath: bareRepositoryPath)
@@ -75,6 +98,9 @@ struct ShuttleUpstreamRefreshService {
 
             switch mergeResult {
             case .merged(let shuttleMainCommit):
+                logger.info("refresh_merged", metadata: [
+                    ShuttleLogField.outcome: .string("success"),
+                ])
                 try repositoryStateStore.transitionIntegrationState(
                     from: .refreshing,
                     to: .open,
@@ -95,6 +121,10 @@ struct ShuttleUpstreamRefreshService {
                         "upstream_ref": upstreamRef,
                     ]
                 )
+                logger.warning("refresh_conflict_recorded", metadata: [
+                    ShuttleLogField.outcome: .string("conflict"),
+                    ShuttleLogField.conflictID: .string(conflict.id),
+                ])
                 return ShuttleUpstreamRefreshResult(
                     outcome: .blocked,
                     upstreamCommit: upstreamCommit,
@@ -103,6 +133,10 @@ struct ShuttleUpstreamRefreshService {
                 )
             }
         } catch let error as ShuttleUpstreamRefreshServiceError {
+            logger.error("refresh_failed", metadata: [
+                ShuttleLogField.outcome: .string("error"),
+                ShuttleLogField.errorCode: .string("refresh_failed"),
+            ])
             _ = try? repositoryStateStore.transitionIntegrationState(
                 from: .refreshing,
                 to: .open,
@@ -117,13 +151,18 @@ struct ShuttleUpstreamRefreshService {
                     config: config
                 )
             }
+            logger.error("refresh_failed", metadata: [
+                ShuttleLogField.outcome: .string("error"),
+                ShuttleLogField.errorCode: .string("refresh_failed"),
+            ])
             throw ShuttleUpstreamRefreshServiceError.refreshFailed(error.localizedDescription)
         }
     }
 
     private func revParse(_ ref: String, bareRepositoryPath: String) throws -> String {
         try ShuttleGitShell.run(
-            ["--git-dir", bareRepositoryPath, "rev-parse", ref]
+            ["--git-dir", bareRepositoryPath, "rev-parse", ref],
+            logger: logger
         ).stdout
     }
 
@@ -140,7 +179,8 @@ struct ShuttleUpstreamRefreshService {
                 "add",
                 tempURL.path,
                 ShuttleRepositoryBootstrapper.shuttleMainBranch,
-            ]
+            ],
+            logger: logger
         )
 
         defer {
@@ -149,18 +189,19 @@ struct ShuttleUpstreamRefreshService {
             )
         }
 
-        _ = try ShuttleGitShell.run(["config", "user.name", "Shuttle Refresh"], workingDirectory: tempURL.path)
-        _ = try ShuttleGitShell.run(["config", "user.email", "shuttle-refresh@example.com"], workingDirectory: tempURL.path)
+        _ = try ShuttleGitShell.run(["config", "user.name", "Shuttle Refresh"], workingDirectory: tempURL.path, logger: logger)
+        _ = try ShuttleGitShell.run(["config", "user.email", "shuttle-refresh@example.com"], workingDirectory: tempURL.path, logger: logger)
 
         do {
             _ = try ShuttleGitShell.run(
                 ["merge", "--no-ff", "--no-edit", upstreamRef],
-                workingDirectory: tempURL.path
+                workingDirectory: tempURL.path,
+                logger: logger
             )
-            let commit = try ShuttleGitShell.run(["rev-parse", "HEAD"], workingDirectory: tempURL.path).stdout
+            let commit = try ShuttleGitShell.run(["rev-parse", "HEAD"], workingDirectory: tempURL.path, logger: logger).stdout
             return .merged(commit)
         } catch let error as ShuttleGitShellError {
-            _ = try? ShuttleGitShell.run(["merge", "--abort"], workingDirectory: tempURL.path)
+            _ = try? ShuttleGitShell.run(["merge", "--abort"], workingDirectory: tempURL.path, logger: logger)
             if case .commandFailed = error {
                 return .conflicted
             }

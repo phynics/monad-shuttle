@@ -1,4 +1,5 @@
 import Foundation
+import Logging
 
 struct ShuttleStartupReconciliationService {
     let config: ShuttleConfig
@@ -8,8 +9,13 @@ struct ShuttleStartupReconciliationService {
     let conflictStore: ShuttleConflictStore
     let auditEventStore: ShuttleAuditEventStore?
     let dockerAccessController: ShuttleDockerAccessController
+    let logger: Logger = ShuttleLogFactory.make(.runtime)
 
     func reconcile() async throws {
+        let logger = self.logger.withMetadata([
+            ShuttleLogField.operation: .string("startup_reconciliation"),
+        ])
+        logger.info("startup_reconciliation_started")
         try reconcileRepositoryState()
 
         for shard in try shardStore.fetchShards() {
@@ -28,6 +34,9 @@ struct ShuttleStartupReconciliationService {
                 continue
             }
         }
+        logger.info("startup_reconciliation_completed", metadata: [
+            ShuttleLogField.outcome: .string("success"),
+        ])
     }
 
     private func reconcileRepositoryState() throws {

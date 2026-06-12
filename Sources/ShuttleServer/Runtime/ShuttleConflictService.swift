@@ -1,4 +1,5 @@
 import Foundation
+import Logging
 
 enum ShuttleConflictResolutionValidationError: Error, Equatable, Sendable {
     case repositoryNotClean(paths: [String])
@@ -62,25 +63,31 @@ struct ShuttleConflictService {
     let config: ShuttleConfig
     let auditEventStore: ShuttleAuditEventStore?
     let repositoryValidator: ShuttleConflictRepositoryValidator
+    let logger: Logger
 
     init(
         repositoryStateStore: ShuttleRepositoryStateStore,
         conflictStore: ShuttleConflictStore,
         config: ShuttleConfig,
         auditEventStore: ShuttleAuditEventStore? = nil,
-        repositoryValidator: ShuttleConflictRepositoryValidator = .live
+        repositoryValidator: ShuttleConflictRepositoryValidator = .live,
+        logger: Logger = ShuttleLogFactory.make(.conflict)
     ) {
         self.repositoryStateStore = repositoryStateStore
         self.conflictStore = conflictStore
         self.config = config
         self.auditEventStore = auditEventStore
         self.repositoryValidator = repositoryValidator
+        self.logger = logger
     }
 
     func recordShardMergeConflict(
         sourceShardID: String,
         details: [String: String]
     ) throws -> ShuttleStoredConflict {
+        let logger = self.logger.withMetadata(ShuttleLogMetadata.shard(sourceShardID)).withMetadata([
+            ShuttleLogField.operation: .string("record_shard_merge_conflict"),
+        ])
         let conflict = try conflictStore.create(
             kind: "shard_merge",
             sourceShardID: sourceShardID,
@@ -92,12 +99,19 @@ struct ShuttleConflictService {
             kind: conflict.kind,
             actor: nil
         )
+        logger.warning("conflict_recorded", metadata: [
+            ShuttleLogField.outcome: .string("conflict"),
+            ShuttleLogField.conflictID: .string(conflict.id),
+        ])
         return conflict
     }
 
     func recordUpstreamRefreshConflict(
         details: [String: String]
     ) throws -> ShuttleStoredConflict {
+        let logger = self.logger.withMetadata([
+            ShuttleLogField.operation: .string("record_upstream_refresh_conflict"),
+        ])
         let conflict = try conflictStore.create(
             kind: "upstream_refresh",
             details: details
@@ -108,6 +122,10 @@ struct ShuttleConflictService {
             kind: conflict.kind,
             actor: nil
         )
+        logger.warning("conflict_recorded", metadata: [
+            ShuttleLogField.outcome: .string("conflict"),
+            ShuttleLogField.conflictID: .string(conflict.id),
+        ])
         return conflict
     }
 
@@ -115,6 +133,11 @@ struct ShuttleConflictService {
         conflictID: String,
         resolutionShardID: String? = nil
     ) throws -> ShuttleStoredConflict {
+        let logger = self.logger.withMetadata([
+            ShuttleLogField.operation: .string("resolve_conflict"),
+        ]).withMetadata(resolutionShardID.map(ShuttleLogMetadata.shard) ?? [:]).withMetadata([
+            ShuttleLogField.conflictID: .string(conflictID),
+        ])
         try repositoryValidator.validate(config)
 
         let resolved = try conflictStore.markResolved(
@@ -141,6 +164,9 @@ struct ShuttleConflictService {
                 blockedConflictID: nil
             )
         }
+        logger.info("conflict_resolved", metadata: [
+            ShuttleLogField.outcome: .string("success"),
+        ])
 
         return resolved
     }
