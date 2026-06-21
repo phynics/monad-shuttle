@@ -1,15 +1,15 @@
 import Foundation
-import PositronicKit
 import PKShared
+import PositronicKit
 
-enum ShuttleShardAgentRunnerError: Error, Equatable, Sendable {
+enum ShuttleShardAgentRunnerError: Error, Equatable {
     case shardNotFound(String)
     case missingRuntimeMetadata(String)
     case invalidShardState(String)
     case missingInstructions(String)
 }
 
-struct ShuttleShardAgentRunResult: Sendable {
+struct ShuttleShardAgentRunResult {
     let timelineID: UUID
     let events: [ChatEvent]
 }
@@ -68,7 +68,6 @@ struct ShuttleShardAgentRunner {
         let toolStore = InMemoryToolPersistence()
         let agentInstanceStore = InMemoryAgentInstanceStore()
         let requestOriginStore = InMemoryRequestOriginStore()
-        let agentTemplateStore = InMemoryAgentTemplateStore()
 
         let workspaceID = UUID()
         let workspace = WorkspaceReference(
@@ -103,7 +102,6 @@ struct ShuttleShardAgentRunner {
             workspacePersistence: workspaceStore,
             memoryStore: memoryStore,
             toolPersistence: toolStore,
-            agentTemplateStore: agentTemplateStore,
             workspaceRoot: URL(fileURLWithPath: runtimeMetadata.worktreePath, isDirectory: true)
         )
 
@@ -198,7 +196,8 @@ struct ShuttleShardAgentRunner {
 
         if let auditEventStore,
            let pendingInstructions = try? auditEventStore.fetchPendingSystemInstructions(shardID: shardID),
-           !pendingInstructions.isEmpty {
+           !pendingInstructions.isEmpty
+        {
             sections.append(
                 """
                 Pending system instructions:
