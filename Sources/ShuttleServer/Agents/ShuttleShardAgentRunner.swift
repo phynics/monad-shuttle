@@ -93,7 +93,7 @@ struct ShuttleShardAgentRunner {
             )
         )
 
-        let runtime = PositronicKitCore(
+        let runtime = PositronicKit(
             llmService: llmService,
             messageStore: messageStore,
             agentInstanceStore: agentInstanceStore,
