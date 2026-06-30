@@ -147,13 +147,24 @@ Sources/
 Tests/
   ShuttleServerTests/
   ShuttleWebUITests/
-docs/
+docs/                  # reference docs only
   deployment.md
   operations.md
 deploy/
   config/
   env/
 ```
+
+Workflow artifacts (design spec, ticket-by-ticket plans) live centrally at the
+workspace root, **not** in this repo's `docs/`:
+
+```text
+../workflow/Shuttle/
+  specs/   # design spec
+  plans/   # SHUT-NNN implementation plans
+```
+
+See the root `../CLAUDE.md` for the full cross-project layout.
 
 ## Build And Test
 
