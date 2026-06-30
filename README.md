@@ -92,11 +92,11 @@ The implementation has been human-directed and AI-executed. The repo history ref
 The project was not started by writing code first. The current implementation follows a documented chain:
 
 - Design spec:
-  [docs/superpowers/specs/2026-05-28-shuttle-design.md](docs/superpowers/specs/2026-05-28-shuttle-design.md)
+  [../workflow/Shuttle/specs/2026-05-28-shuttle-design.md](../workflow/Shuttle/specs/2026-05-28-shuttle-design.md)
 - V1 epics and tickets:
-  [docs/superpowers/plans/2026-05-28-shuttle-v1-epics-tickets.md](docs/superpowers/plans/2026-05-28-shuttle-v1-epics-tickets.md)
+  [../workflow/Shuttle/plans/2026-05-28-shuttle-v1-epics-tickets.md](../workflow/Shuttle/plans/2026-05-28-shuttle-v1-epics-tickets.md)
 - Ticket implementation notes:
-  [docs/superpowers/plans](docs/superpowers/plans)
+  [../workflow/Shuttle/plans](../workflow/Shuttle/plans)
 
 Implemented tickets so far include:
 
@@ -150,8 +150,6 @@ Tests/
 docs/
   deployment.md
   operations.md
-  superpowers/specs/
-  superpowers/plans/
 deploy/
   config/
   env/

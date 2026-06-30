@@ -151,4 +151,4 @@ Before treating an instance as usable, verify:
 
 - [README](/Volumes/Development/monad-project/Shuttle/README.md)
 - [docs/operations.md](/Volumes/Development/monad-project/Shuttle/docs/operations.md)
-- [design spec](/Volumes/Development/monad-project/Shuttle/docs/superpowers/specs/2026-05-28-shuttle-design.md)
+- [design spec](/Volumes/Development/monad-project/workflow/Shuttle/specs/2026-05-28-shuttle-design.md)
